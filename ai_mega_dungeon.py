@@ -36,16 +36,18 @@ class AIMegaDungeon:
             self.map = {}
             self.rooms = {}
             self.levels = pd.read_csv(self.file_path(levels), sep='\t')
-             self.Current_Orientation, self.Current_Room, self.Current_Location = None, None, None
+            self.Current_Orientation, self.Current_Room, self.Current_Location = None, None, None
             self.doors = {}
+            self.locations = {}
             
             
             with open(self.file_path('AppendixA.pickle'), 'rb') as file:   
                 self.AppendixA = pickle.load(file)
             print('Dungeon {} Created'.format(filename))
 
-            if self.Cuirrent_Locations == None:
-                self.start()
+            if self.Current_Location == None:
+                #self.start()
+                print('start here?')
             else:
                 print('INSERT A LOAD ROOM HERE')
             #self.save(filename)
@@ -64,6 +66,7 @@ class AIMegaDungeon:
             self.rooms = dct['rooms']
             self.doors = dct['doors'] 
             self.levels = dct['levels'] 
+            self.locations = dct['locations']
             self.Current_Orientation, self.Current_Room, self.Current_Location = dct['vars']
             print('{} Loaded Successfully')
             return 1
@@ -75,6 +78,7 @@ class AIMegaDungeon:
         dct['doors'] = self.doors
         dct['levels'] = self.levels
         dct['vars'] = (self.Current_Orientation, self.Current_Room, self.Current_Location)
+        sct['locations'] = self.locations
         with open(filename+'.aad', 'wb') as file:
             pickle.dump(dct, file)  
         
@@ -157,6 +161,7 @@ class AIMegaDungeon:
         '''
         
         '''
+        
         tup, wall = self.shift_from_wall(self.Current_Location, self.Current_Orientation, door_location)
         coord = str(tuple(sorted([self.Current_Location, tup])))
         
@@ -170,42 +175,128 @@ class AIMegaDungeon:
             else:
                 self.doors[coord]['door type'] = self.roll(self.AppendixA['Door Type'])
             
-    def new_room(self, room='Chamber'):
-        '''
-        Makes doors, rolls for room, finds exits, etc.
-        '''
-        if room=='Chamber':  # Chamber
+    def new_room(self, room='Chamber', start=False):
+    '''
+    Makes doors, rolls for room, finds exits, etc.
+    '''
+    
+    try:
+        room_id = max(list(self.rooms.keys())) + 1
+    except:
+        room_id = 0
+        start = True
+    if room=='Chamber':  # Chamber
+        okay = False
+        while okay == False:
             room_desc = self.roll(self.AppendixA['Chamber'])
-            room_purpose = self.AppendixA['Purpose'][self.levels[self.levels['level'] == self.Current_Location[2]]['purpose'].values[0]]
+            room_purpose = self.roll(self.AppendixA['Purpose'][self.levels[self.levels['level'] == self.Current_Location[2]]['purpose'].values[0]])
+
+            print(room_desc)
+            #Get the dimensions of the room
+            if room_desc.find('Circle') > -1:
+                dimensions = [room_desc[8:10], room_desc[8:10]]
+            else:
+                dimensions = room_desc[room_desc.find('×')-3:room_desc.find('×')+4].split(' × ')
+            print(dimensions)
+            # see if it fits in the map...
+            locations = []
+            locations.append(self.Current_Location)
+            okay = True
+            if int(dimensions[1])>40:
+                check_loc = self.shift_from_wall(self.Current_Location, self.Current_Orientation, 'Wall opposite entrance')[0]
+                if str(check_loc) in self.locations.keys():
+                    okay = False
+                else:
+                    locations.append(check_loc)
+            if int(dimensions[0])>40:
+                check_loc = self.shift_from_wall(self.Current_Location, self.Current_Orientation, 'Wall right of entrance')[0]
+                direction = 'right'
+                if str(check_loc) in self.locations.keys():
+                    check_loc = self.shift_from_wall(self.Current_Location, self.Current_Orientation, 'Wall left of entrance')[0]
+                    direction = 'left'
+                if str(check_loc) in self.locations.keys():
+                    okay = False
+                else:
+                    locations.append(check_loc)
+                    if int(dimensions[1])>40:
+                        check_last = self.shift_from_wall(check_loc, self.Current_Orientation, 'Wall opposite entrance')[0]
+                        if str(check_last) in self.locations.keys():
+                            okay = False
+                        else:
+                            locations.append(check_last)
+                            
+        # mark these locations as this room
+        for loc in locations:
+            self.locations[str(loc)] = room_id
+            print(loc)
         # Door Stuff Here...
+        exit_key = room_desc[-1]
+        room_desc = room_desc[:-1]
+        exits = int(self.roll(self.AppendixA['Chamber_Exits_{}'.format(exit_key)]))
+        if start==True and exits<4:
+            exits = 4
+        # first, find all the exits we already know about...
+        doors = []
+        for loc in locations:
+            for key in self.doors.keys():
+                if str(loc) in key:
+                    doors.append(key)
+        print(locations)
+        print(doors)
+        while len(doors) < int(exits): #need new doors...
+            door_location = self.roll(self.AppendixA['Exit Location'])
+            tup, wall = self.shift_from_wall(self.Current_Location, self.Current_Orientation, door_location)
+            if tup in locations:
+                self.current_location = tup
+            self.new_door(door_location, exit=False, passage = False)
+            doors = []
+            for loc in locations:
+                for key in self.doors.keys():
+                    if str(loc) in key:
+                        doors.append(key)
+            print(len(doors), exits)
+            
+        make_room(self, room, room_purpose, locations, room_id)
         
-        make_room(room_desc)
-        
-    def make_room(self, room, room_purpose):
+    def make_room(self, room, room_purpose, locations, room_id):
+        self.rooms[room_id] = {}
+        self.rooms[room_id]['locations'] = locations
+        self.rooms['shape'] = room
+        self.rooms['purpose'] = room_purpose
         doors = []
         door_location = {'(0, -1, 0)' : 's',
                  '(0, 1, 0)' : 'n',
                  '(1, 0, 0)' : 'e',
                  '(-1, 0, 0)' : 'w'}
         for key in self.doors.keys():
-            if key.find(str(self.Current_Location)) > -1:
-                door = self.doors[key]['door type']
-                if door.find('passage') == -1:
-                    door = door + ' door'
-                if self.doors[key]['exit']:
-                    door = door + ' that leads out of the dungeon'
-                dif = str(tuple([n-self.Current_Location[i] for i, n in enumerate([int(a) for a in key.replace(str(self.Current_Location),'').replace('(','').replace(')','').replace(' ','').split(',') if len(a) > 0])]))
+            for loc in locations:
+                if key.find(str(loc)) > -1:
+                    door = self.doors[key]['door type']
+                    if door.find('passage') == -1:
+                        door = door + ' door'
+                    if self.doors[key]['exit']:
+                        door = door + ' that leads out of the dungeon'
+                    dif = str(tuple([n-self.Current_Location[i] for i, n in enumerate([int(a) for a in key.replace(str(self.Current_Location),'').replace('(','').replace(')','').replace(' ','').split(',') if len(a) > 0])]))
 
-                if door.lower().find('secret') == -1:
-                    doors.append(door + ' located on the {} wall'.format(door_location[dif]))
+                    if door.lower().find('secret') == -1:
+                        doors.append(door + ' located on the {} wall'.format(door_location[dif]))
         walls = self.levels[self.levels['level'] == self.Current_Location[2]]['walls'].values[0]
         floors = self.levels[self.levels['level'] == self.Current_Location[2]]['floors'].values[0]
         ceilings = self.levels[self.levels['level'] == self.Current_Location[2]]['ceilings'].values[0]
         # check contents...
         contents = []
         for key in self.AppendixA['Dungeon Dressings'].keys():
-            contents.append(key + ': ' + self.roll(self.AppendixA['Dungeon Dressings'][key]))
-        
+            if key != 'General Furnishings and Appointments':
+                thing =  self.roll(self.AppendixA['Dungeon Dressings'][key])
+                contents.append(key + ': ' + thing)
+            else:
+                things = []
+                for loc in locations:
+                    things.append(self.roll(self.AppendixA['Dungeon Dressings'][key]))
+                self.rooms[room_id][key] = things
+                contents.append(key + ': ' + ', '.join(things))
+                    
+            
         query = prompt = """
                        Given the following:
 
@@ -221,7 +312,7 @@ class AIMegaDungeon:
                         '
                         
                         
-                        First, a short D&D room description like those found in blue boxes in old modules
+                        First, a short D&D room description like those found in blue boxes in old modules with no header
                         then, include the following character: "|"
                         Then provide a prompt optimized for openai/gpt-5-image-mini to draw the above given the following specifications.  
                         Be sure to calculate the size of the floor in pixels and add the additional area needed to represent the walls, an extra 140 pixels:
@@ -253,8 +344,11 @@ class AIMegaDungeon:
         chat_gpt = self.get_chat_response(prompt=str(query))
         lst = chat_gpt.split('|')
         blue_box = lst[0]
-        print(blue_box)
-        return lst[1]
+        room_image_prompt = lst[1]
+
+        self.rooms[room_id]['blue box'] = blue_box
+        # make room image...
+        return room_image_prompt
    
     
     ### Movement
