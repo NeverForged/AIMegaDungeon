@@ -7,7 +7,6 @@ import requests
 import pandas as pd
 import random as rand
 
-
 class AIMegaDungeon:
     def __init__(self, filename=None, levels='levels.csv', keys='|'):
         '''
