@@ -1,22 +1,33 @@
 import os
 import json
+import shutil
 import pickle
 import base64
 import openai
 import requests
 import pandas as pd
 import random as rand
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+
+import enum
+import heapq
+import random
+import collections
+
+
+
 
 class AIMegaDungeon:
-    def __init__(self, filename=None, levels='levels.csv', keys='|'):
+    _slots_ = ('levels', 'level_info')
+    
+    def __init__(self, filename=None, levelfile='levels.csv', keys='|'):
         '''
-        map -> a dictionary that stores x, y, z coordinates as roughly 30ft. blocks... 0,0,0 being the dungeon entrance.  
-        Stores the room id at that location.  Checked to see if something exists there.  Each room/passage takes up one
-        (or more) blocks
+      
 
-        rooms -> room information, key is room id
+        levels -> a dict of dungeon objects, each representing a level of the dungeon.
 
-        levels -> level information, key is z coordinate (0 for first level)
+        level_info -> level information, key is z coordinate (0 for first level)
 
         self.doors -> door information, 
         
@@ -30,34 +41,24 @@ class AIMegaDungeon:
         if filename != None: #load the old file
             new = self.load(filename)
             self.filename = filename        
-            self.levels = pd.read_csv(self.file_path(levels), sep='\t')
+            self.leveldf = pd.read_csv(self.file_path(levels), sep='\t')
             new = 1
         if new == 0: # need a new instance
-            self.filename = input('Name this dungeon:')
-            self.map = {}
-            self.rooms = {}
-            self.levels = pd.read_csv(self.file_path(levels), sep='\t')
-            self.Current_Orientation, self.Current_Room, self.Current_Location = None, None, None
-            self.doors = {}
-            self.locations = {}
+            self.filename = 'test' # input('Name this dungeon:')
+            self.levelsdf = pd.read_csv(self.file_path(levelfile), sep='\t')
+            
             
             
             with open(self.file_path('AppendixA.pickle'), 'rb') as file:   
                 self.AppendixA = pickle.load(file)
             print('Dungeon {} Created'.format(filename))
 
-            if self.Current_Location == None:
-                #self.start()
-                print('start here?')
-            else:
-                print('INSERT A LOAD ROOM HERE')
-            #self.save(filename)
-            
-  
+ 
     ## ADMIN FUNCTIONS
     def file_path(self, filename):
         return os.path.join(self.current_dir, '{}'.format(filename))
-        
+    
+    """
     def load(self, filename=None):
             try:
                 with open(filename+'.aad', 'rb') as file:    
@@ -89,12 +90,12 @@ class AIMegaDungeon:
         return df[df['Roll']==droll]['Result'].values[0]
         
     ### AI CALLS     
-    def get_chat_response(self, prompt, model="gpt-3.5-turbo"):
+    def get_chat_response(self, prompt, role="You are a helpful assistant.", model="gpt-3.5-turbo"):
         client = openai.OpenAI(api_key=self.OPENAI_API_KEY) # Create an OpenAI client instance
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "system", "content": role},
                 {"role": "user", "content": prompt}
             ]
         )
@@ -116,9 +117,7 @@ class AIMegaDungeon:
         units="ft",
         debug=False
         ):
-        """
-        Build a GPT-5-mini prompt that strictly enforces floor dimensions.
-        """
+    
 
         wall_spaces_ft = 10
 
@@ -126,7 +125,7 @@ class AIMegaDungeon:
         dir_dct = {'south':'bottom','north':'top','east':'right side','west':'left side'}
         doors_text = "\n"
         dct_door_stuff = {'north':floor_h, 'south':floor_h, 'east': floor_w, 'west':floor_w}
-        floor_ratio = get_image_ratio(self,[floor_w, floor_h])
+        floor_ratio = self.get_image_ratio([floor_w, floor_h])
         floor_height = int(floor_h/5)
         floor_width = int(floor_w/5)
         if doors:
@@ -141,7 +140,6 @@ class AIMegaDungeon:
                     door_x_start = round(door_center_x - d['width_ft']/10,2)
                     door_x_end   = round(door_center_x + d['width_ft']/10,2)
                     y = 0 if d['wall'] == 'south' else floor_height
-                    print(f"Door on {d['wall']} wall spans x={door_x_start} to x={door_x_end}, y={y}")
                     doors_text_lst.append('\t{}. {} wall — {}, {} feet wide, door spans x={} to x={}, y={})'.format(i+1
                                                                                                                    , d['wall']
                                                                                                                    , d['type']
@@ -238,7 +236,6 @@ class AIMegaDungeon:
         fy1 = int(squares/2) - diffy
         fy2 = int(squares/2) + diffy
 
-        print(fx1, fx2, fy2, fy2)
         #WALL coordinates
         ndiffx = (floor_width + int(wall_spaces_ft/5))/2
         ndiffy = (floor_height + int(wall_spaces_ft/5))/2
@@ -246,8 +243,7 @@ class AIMegaDungeon:
         wx2 = int(squares/2) + ndiffx
         wy1 = int(squares/2) - ndiffy
         wy2 = int(squares/2) + ndiffy
-        print(wx1, wx2, wy2, wy2)
-        
+
         layout_lst = [] 
         for r in range(int(squares)):
             row = ''
@@ -261,7 +257,7 @@ class AIMegaDungeon:
             layout_lst.append(row)
         layout = '\n'.join(layout_lst)
         
-        prompt = f"""***REALISTIC TOP-DOWN ORTHOGRAPHIC BATTLEMAP WITH VISUAL WALLS - {room_shape_main.upper()} {room_theme.upper()} {art_note_1.upper()}***
+        prompt = f'''***REALISTIC TOP-DOWN ORTHOGRAPHIC BATTLEMAP WITH VISUAL WALLS - {room_shape_main.upper()} {room_theme.upper()} {art_note_1.upper()}***
 
     CANVAS & MASKING
     - Canvas size: {int(squares)}×{int(squares)} units
@@ -340,7 +336,7 @@ class AIMegaDungeon:
 
 
     ***Use Realistic Colors and Textures***
-        """
+        '''
         if debug:
             print(prompt)
             return prompt
@@ -374,7 +370,10 @@ class AIMegaDungeon:
         # ------------------
         response = requests.post(url, headers=headers, json=payload)
         result = response.json()
-        self.rooms[room_id]['image result'] = result
+        try:
+            self.rooms[room_id]['image result'] = result
+        except:
+            print('not a room')
         
         # ------------------
         # HANDLE RESPONSE
@@ -408,12 +407,11 @@ class AIMegaDungeon:
         with open(output_path, "wb") as f:
             f.write(base64.b64decode(base64_data))
                 
-        print(f"Saved generated image to: {output_path}")
     
        
     ## MATH & WORKERS       
     def shift_from_wall(self, pos, facing, wall):
-        """
+        '''
         pos: (ew, ns, ud)
         facing: 'n', 's', 'e', 'w'
         wall: one of
@@ -421,7 +419,7 @@ class AIMegaDungeon:
             'Same wall as entrance',
             'Wall left of entrance',
             'Wall right of entrance'
-        """
+        '''
     
         # Movement vectors in (east-west, north-south)
         vectors = {
@@ -490,9 +488,9 @@ class AIMegaDungeon:
                 self.doors[coord]['door type'] = self.roll(self.AppendixA['Door Type'])
             
     def new_room(self, room='Chamber', start=False):
-        """
+        '''
         Makes doors, rolls for room, finds exits, etc.
-        """
+        '''
         # Determine room_id and whether this is the start room
         try:
             room_id = max(self.rooms.keys()) + 1
@@ -631,7 +629,7 @@ class AIMegaDungeon:
             
             dimensions.reverse()
        
-        return room_desc, room_purpose, locations, room_id, dimensions
+        self.make_room(room_desc, room_purpose, locations, room_id, dimensions)
 
     def make_room(self, room, room_purpose, locations, room_id, dimensions):
         self.rooms[room_id] = {}
@@ -651,7 +649,6 @@ class AIMegaDungeon:
             placefinder = [loc[i] - locations[0][i] for i in range(3)]
             units = [units[i] + placefinder[i] for i in range(2)]
         divs = [dimensions[i]/units[i] for i in range(2)]
-        print(divs)
         for loc in locations:
             for key in self.doors.keys():
                 if key.find(str(loc)) > -1:
@@ -671,7 +668,6 @@ class AIMegaDungeon:
                            door['placement'] = (int(placefinder[0]*divs[0] + divs[0]/2),dimensions[0])
                         elif door['wall'] == 'east' or door['wall'] == 'west':
                             door['placement'] = (int(placefinder[1]*divs[1] + divs[1]/2),dimensions[1])
-                        print(door)
                         doors.append(door)
         walls = self.levels[self.levels['level'] == self.Current_Location[2]]['walls'].values[0]
         floors = self.levels[self.levels['level'] == self.Current_Location[2]]['floors'].values[0]
@@ -713,24 +709,1279 @@ class AIMegaDungeon:
             scale = scale -1
             x = (dimensions[0]+10)*scale
             y = (dimensions[1]+10)*scale
-            print('Scale:',scale)
 
         # generate the prompt
-        prompt = build_battlemap_prompt(self, canvas_w = canvas_w
-                                                   , canvas_h = canvas_h
-                                                   , floor_w = dimensions[0] # in ft
-                                                   , floor_h = dimensions[1] # in ft
-                                                   , grid_px = scale*5
-                                                   , room_shape = room
-                                                   , room_theme = room_purpose
-                                                   , floor_material = floors
-                                                   , wall_material = walls
-                                                   , doors = doors
-                                                   , contents = contents
-                                                   , debug = True)
-     
+
+        image_prompt = self.build_battlemap_prompt(canvas_w = canvas_w
+                                           , canvas_h = canvas_h
+                                           , floor_w = dimensions[0] # in ft
+                                           , floor_h = dimensions[1] # in ft
+                                           , grid_px = scale*5
+                                           , room_shape = room
+                                           , room_theme = room_purpose
+                                           , floor_material = floors
+                                           , wall_material = walls
+                                           , doors = doors
+                                           , contents = contents
+                                           , debug = False)
+                                           
+                                           
+
+        print(image_prompt)
+        retry = True
+        fails = 1
         file_name = self.file_path('{} room {}.png'.format(self.filename, room_id))
-        self.render_image(room_id, file_name, prompt, model="openai/gpt-5-image-mini")
+        # try my old version first...
+        prompt = image_prompt
+        model = "openai/gpt-5-image-mini"
+        while retry:
+            self.render_image(room_id, file_name, prompt, model=model)
         
+            # Load the image
+            img = mpimg.imread(file_name)  # Replace "your_image.png" with your image file path
+
+            # Display the image
+            plt.imshow(img)
+            plt.axis('off')
+            plt.show()
+            good = input('Does this look like {} {}?'.format(room, room_purpose))
+            if good.lower()[0] == 'y':
+                retry = False
+                folder = self.file_path('success').replace("\\\\", "\\")
+                try:
+                    shutil.move(file_name, folder)
+                except:
+                    os.system('del {}/{}'.format(folder, file_name))
+                    shutil.move(file_name, folder)
+                self.rooms[room_id]['image'] = self.file_path('success/{} room {}.png'.format(self.filename, room_id))
+                img = mpimg.imread(self.file_path('success/{} room {}.png'.format(self.filename, room_id)))  # Replace "your_image.png" with your image file path
+                print('Showing Again')
+                # Display the image
+                plt.imshow(img)
+                plt.axis('off')
+                plt.show()
+            else:
+                print('trying again...')
+                move_file = True
+                while move_file:
+                    try:
+                        folder = self.file_path('fail').replace("\\\\", "\\")
+                        new_filename = file_name.replace('.png','fail{}.png'.format(fails))
+                        fails +=1
+                        os.rename(file_name, new_filename)
+                        shutil.move(new_filename, folder)
+                        move_file = False
+                    except:
+                        print('trying again... {}'.format(fails))
+                        move_file = False
+
+    def new_stairs(self, destination, door_id):
+        '''
+        '''
+        stairdct = {'up one level': 1
+                   , 'down one level': -1
+                   , 'down two levels': -2
+                   , 'down three levels': -3
+                   , 'up two levels': 2
+                   , 'dead end': 9001}
+        possible = False
+        tries = 0
+        while not possible and tries < 10:
+            result = self.roll(self.AppendixA['Stairs'])
+            #directions
+            directions = []
+            destinations_new = []
+            [directions.append(stairdct[key]) for key in stairdct.keys() if result.lower().find(key) > -1]
+            tries += 1
+            #check if the level exists...
+            fits = 0
+            for dr in directions:
+                tt = (0,0,dr)
+                temp = tuple([int(a) + tt[i] for i, a in enumerate(destination.split(','))])
+                if self.levels[self.levels['level'] == self.Current_Location[2]+dr].shape[0] > 0 and str(temp) not in self.locations.keys():
+                    destinations_new.append(temp)
+                    possible = True
+        self.doors[door_id]['Stairs'] = destinations_new
+        if possible == True:
+            # we have stairs
+
+           
+            # block all locations that can't be used...
+            dest = str(tuple([int(a) for a in destination.split(',')]))
+            self.locations[dest] = {}
+            self.locations[dest]['Stairs'] = destinations_new
+
+            for nd in destinations_new:
+                # add doors from destinations_new to origin on same floor
+                ndoor = ', '.join([a if a.find(')') == -1 else a.replace(a.split(')')[0],str(nd[2])) for a in door_id.split(',')])
+                self.doors[ndoor] = self.doors[door_id]
+            if len(destinations_new) > 1:
+                choice = ' '
+                while choice.lower()[0] not in ['u', 'd']:
+                    choice = input('Up or down?')
+                if choice == 'u':
+                    ndestination = destinations_new[1]
+                else:
+                    ndestination = destinations_new[0]
+            else:
+                self.doors[door_id]['Stairs'] = True
+                ndestination = destinations_new[0]
+            self.Current_Location = ndestination
+            
+            if result.lower().find('passage') > -1:
+                self.new_room(room='Passage')
+            else:
+                self.new_room(room='Chamber')
+        else:  #just make a room...
+            self.Current_Location = destination
+            # self.new_room(room=result)
+        return tries    
         
+    def get_orientation(self, door_key, destination):
+        destination = str(destination)
+        origin = door_key.replace(destination,'').replace(', )','').replace('(, ','').replace('(','').replace(')','').replace(' ','').split(',')
+        destination = destination.replace('(','').replace(')','').replace(' ','').split(',')
+        print(origin, destination)
+        orient_dct = {'(0, -1, 0)' : 's',
+                      '(0, 1, 0)' : 'n',
+                      '(1, 0, 0)' : 'e',
+                      '(-1, 0, 0)' : 'w'}
+        return orient_dct[str(tuple([int(d)-int(origin[i]) for i, d in enumerate(destination)]))]
+
+     
     ### Movement
+    def open_door(self, door_key):
+        '''
+        They try to open a door
+        '''
+        #detemrine destination
+        destination = door_key
+        locations = self.rooms[self.locations[str(self.Current_Location)]]['locations']
+        for loc in locations:
+            destination = destination.replace(str(loc),'')
+        destination = destination.replace('((','(').replace('))',')').replace(', )','').replace('(, ','')
+        destination = tuple([int(a) for a in destination.replace('(','').replace(')','').split(', ')])
+        # orientation
+        self.Current_Orientation = self.get_orientation(door_key, destination)
+        # what's beyound the door?
+        result = self.roll(self.AppendixA['Beyond Door'])
+        print(result)
+        result = result.split(' ')[0]
+
+        if result == 'False':
+            self.locations[destination] = -2
+            print('ADD TRAP HERE')
+        elif result == 'Stairs':
+            print('ADD STAIRS HERE')
+        else:
+            self.Current_Location = destination
+            self.new_room(room=result)
+            
+ """   
+    
+    
+    
+    
+
+
+
+
+
+##############
+# Enumerations
+##############
+
+class DIRECTION(enum.Enum):
+    '''
+    An enum that sets direction
+    '''
+    LEFT = 1
+    RIGHT = 2
+    UP = 3
+    DOWN = 4
+
+
+#######
+# Utils
+#######
+
+def random_color():
+    return '#' + ''.join([random.choice('0123456789') for i in range(6)])
+
+def points_at_circle(x, y, radius):
+    points = set()
+
+    for i in range(radius + 1):
+        points.add((x + i, y + (radius - i)))
+        points.add((x + i, y - (radius - i)))
+        points.add((x - i, y + (radius - i)))
+        points.add((x - i, y - (radius - i)))
+
+    return points
+
+def restore_path(path_map, point):
+    path = []
+
+    while point is not None:
+        path.append(point)
+        point = path_map[point]
+
+    path.reverse()
+
+    return path
+
+def find_path(point_from, point_to, filled_cells, max_path_length):
+    '''
+    '''
+    index = 0
+
+    heap = [(0, index, point_from, None)]
+
+    visited_points = {}
+
+    path_map = {}
+
+    while True:
+
+        cost, _, point, prev_point = heapq.heappop(heap)
+
+        path_map[point] = prev_point
+
+        if max_path_length <= cost:
+            return None, None
+
+        if point == point_to:
+            return cost, restore_path(path_map, point_to)
+
+        visited_points[point] = cost
+
+        for next_point in point.neighbours():
+            if next_point in visited_points:
+                continue
+
+            if next_point in filled_cells:
+                continue
+
+            index += 1
+            heapq.heappush(heap, (cost + 1, index, next_point, point))
+
+    return None, None
+
+def make_contour(segments):
+
+    segments = list(segments)
+
+    line = list(segments.pop())
+
+    while True:
+
+        end_point = line[-1]
+
+        for segment in segments:
+            if end_point == segment[0]:
+                line.append(segment[1])
+                segments.remove(segment)
+                break
+        else:
+            break
+
+    return line
+
+def get_distance(tup1, tup2):
+    x = tup2[0]-tup1[0]
+    y = tup2[1]-tup1[1]
+    return (x**2 + y**2)**(0.5)
+    
+##############
+# Core classes
+##############
+class Position():
+    '''
+    position is a tuple, (x, y)
+    '''
+    __slots__ = ('x', 'y')
+
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __hash__(self):
+        return hash((self.x, self.y))
+
+    def __eq__(self, other):
+        return (self.x, self.y) == (other.x, other.y)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def neighbours(self):
+        '''
+        finds all neighboring blocks that share a border with the block in question...
+        '''
+        return {Position(self.x - 1, self.y),
+                Position(self.x, self.y - 1),
+                Position(self.x + 1, self.y),
+                Position(self.x, self.y + 1)}
+
+    def area(self):
+        '''
+        Not sure why this is called "area"
+        grabs the blocks that border on all sides...
+        '''
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                yield Position(self.x + dx, self.y + dy)
+
+    def move(self, dx, dy):
+        '''
+        grabs position dx, dy away for moving the block
+        '''
+        return Position(self.x + dx, self.y + dy)
+        
+    def rotate_clockwise(self):
+        return Position(self.y, -self.x)
+
+    def point(self):
+        '''
+        returns the position as a tuple
+        '''
+        return (self.x, self.y)
+
+class Border():
+    '''
+    finds the borders of a room
+    '''
+    __slots__ = ('position', 'direction', 'internal', 'can_has_door', 'used', 'door')
+
+    def __init__(self, position, direction):
+        self.position = position
+        self.direction = direction
+        self.internal = False
+        self.can_has_door = False
+        self.used = False
+        self.door = None
+
+    def __eq__(self, other):
+        return (self.position, self.direction) == (other.position, other.direction)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    
+    def is_mirrored(self, other_border):
+        check_direction = None
+        if self.direction == DIRECTION.LEFT:
+           check_direction = DIRECTION.RIGHT
+        elif self.direction == DIRECTION.RIGHT:
+            check_direction = DIRECTION.LEFT
+        elif self.direction == DIRECTION.UP:
+            check_direction = DIRECTION.DOWN
+        elif self.direction == DIRECTION.DOWN:
+            check_direction = DIRECTION.UP
+            
+        if other_border.direction == check_direction:
+            return True
+        else:
+            return False
+            
+    def mirror(self):
+        '''
+        mirrors the border position
+        '''
+        if self.direction == DIRECTION.LEFT:
+            return Border(self.position.move(-1, 0), DIRECTION.RIGHT)
+
+        if self.direction == DIRECTION.RIGHT:
+            return Border(self.position.move(1, 0), DIRECTION.LEFT)
+
+        if self.direction == DIRECTION.UP:
+            return Border(self.position.move(0, 1), DIRECTION.DOWN)
+
+        if self.direction == DIRECTION.DOWN:
+            return Border(self.position.move(0, -1), DIRECTION.UP)
+
+    def geometry_borders(self):
+        '''
+        creates the geometry of the borders
+        '''
+        if self.direction == DIRECTION.LEFT:
+            return [self.position.move(0, 0).point(),
+                    self.position.move(0, 1).point()]
+
+        if self.direction == DIRECTION.RIGHT:
+            return [self.position.move(1, 1).point(),
+                    self.position.move(1, 0).point()]
+
+        if self.direction == DIRECTION.UP:
+            return [self.position.move(0, 1).point(),
+                    self.position.move(1, 1).point()]
+
+        if self.direction == DIRECTION.DOWN:
+            return [self.position.move(1, 0).point(),
+                    self.position.move(0, 0).point()]
+
+    def rotate_clockwise(self):
+        '''
+        As it says on the tin
+        '''
+        self.position = self.position.rotate_clockwise()
+
+        if self.direction == DIRECTION.LEFT:
+            self.direction = DIRECTION.UP
+
+        elif self.direction == DIRECTION.RIGHT:
+            self.direction = DIRECTION.DOWN
+
+        elif self.direction == DIRECTION.UP:
+            self.direction = DIRECTION.RIGHT
+
+        elif self.direction == DIRECTION.DOWN:
+            self.direction = DIRECTION.LEFT
+            
+    def move(self, dx, dy):
+        '''
+        moves it dx, dy
+        '''
+        self.position = self.position.move(dx, dy)
+
+    def connection_point(self):
+        '''
+        finds a connection point...
+        '''
+        segment = self.geometry_borders()
+
+        return ((segment[0][0] + segment[1][0]) / 2,
+                (segment[0][1] + segment[1][1]) / 2)
+        
+class Block():
+    '''
+    position
+    borders
+    '''
+    __slots__ = ('position','borders')
+   
+    def __init__(self, position):
+        self.position = position
+
+        self.borders = {DIRECTION.RIGHT: Border(position, DIRECTION.RIGHT),
+                        DIRECTION.LEFT: Border(position, DIRECTION.LEFT),
+                        DIRECTION.UP: Border(position, DIRECTION.UP),
+                        DIRECTION.DOWN: Border(position, DIRECTION.DOWN)}
+    
+    def geometry_borders(self):
+        '''
+        returns the borders that are external vs internal to the room
+        '''
+        return [border.geometry_borders()
+                for border in self.borders.values()
+                if not border.internal]
+    
+    def grid_borders(self):
+        '''
+        returns the internal borders for drawing the grid
+        '''
+        return [border.geometry_borders()
+                for border in self.borders.values() if border.internal]
+                
+
+    def sync_borders_with(self, block):
+        '''
+        checks if borders are internal
+        '''
+        for own_border in self.borders.values():
+            for other_border in block.borders.values():
+                if own_border.mirror() == other_border:
+                    own_border.internal = True
+                    other_border.internal = True
+
+    def move(self, dx, dy):
+        self.position = self.position.move(dx, dy)
+
+        for border in self.borders.values():
+            border.move(dx, dy)
+            
+    def rotate_clockwise(self):
+        self.position = self.position.rotate_clockwise()
+
+        for border in self.borders.values():
+            border.rotate_clockwise()
+
+        self.borders = {border.direction: border for border in self.borders.values()}
+
+class Room():
+    '''
+    A collection of blocks...
+    '''
+    __slots__ = ('blocks','color', 'doors', 'is_exit')
+
+    def __init__(self, position=Position(0,0)):
+        self.blocks = [Block(position)]
+        self.color = random_color()
+        self.doors = []
+        self.is_exit = False
+
+    def block_positions(self):
+        return {block.position for block in self.blocks}
+
+    def area_positions(self):
+        area = set()
+
+        for position in self.block_positions():
+            area |= set(position.area())
+
+        return area
+   
+    def allowed_new_block_positions(self):
+        '''
+        If using expand to randomly make a room, determines where
+        a block can go
+        
+        Cahnegd from a set to a list to make more regular shaped rooms
+        '''
+        allowed_positions = list()
+
+        for block in self.blocks:
+            [allowed_positions.append(a) for a in list(block.position.neighbours()) if a not in list(self.block_positions())]
+
+
+        return allowed_positions
+               
+    def expand(self):
+        '''
+        Randomly adds a block to the border of another block in the room
+        '''
+        # The below makes the choice random...
+        # new_position = random.choice(list(self.allowed_new_block_positions()))
+        # we want more regular shaped rooms...
+        possibilities = []
+        for item, counts in collections.Counter(list(self.allowed_new_block_positions())).items():
+            # have each block appear the square of the number of neighbors
+            for i in range(counts**counts):  
+                possibilities.append(item)
+
+        # Still random, but more likely to fill properly
+        new_position = random.choice(possibilities)
+        new_block = Block(new_position)
+
+        for block in self.blocks:
+            block.sync_borders_with(new_block)
+
+        self.blocks.append(new_block)
+ 
+    def geometry_borders(self):
+        '''
+        gives outer borders of room
+        '''
+        borders = []
+
+        for block in self.blocks:
+            borders.extend(block.geometry_borders())
+
+        return borders
+        
+    def grid_borders(self):
+        '''
+        gives inner borders of the blocks in the room so a grid may be drawn
+        '''
+        borders = []
+
+        for block in self.blocks:
+            borders.extend(block.grid_borders())
+
+        return borders
+
+    def rectangle(self):
+        '''
+        finds the corners of the rectangle that contains the randomly shapoed room
+        '''
+        positions = self.block_positions()
+
+        min_x, max_x, min_y, max_y = 0, 0, 0, 0
+
+        for position in positions:
+            min_x = min(position.x, min_x)
+            min_y = min(position.y, min_y)
+            max_x = max(position.x, max_x)
+            max_y = max(position.y, max_y)
+
+        return min_x, min_y, max_x, max_y
+
+    def has_holes(self):
+        '''
+        finds holes in the room...
+        '''
+        min_x, min_y, max_x, max_y = self.rectangle()
+
+        block_positions = self.block_positions()
+
+        all_positions = set()
+
+        # add additional empty cells around rectangle
+        # to guaranty connectedness
+        for x in range(min_x - 1, max_x + 2):
+            for y in range(min_y - 1, max_y + 2):
+                all_positions.add(Position(x, y))
+
+        all_positions -= block_positions
+
+        first_position = next(iter(all_positions))
+
+        queue = collections.deque()
+
+        queue.append(first_position)
+
+        while queue:
+            position = queue.popleft()
+
+            if position not in all_positions:
+                continue
+
+            queue.extend(position.neighbours())
+
+            all_positions.remove(position)
+
+        return bool(all_positions)
+
+    def is_intersect(self, room):
+        return bool(self.area_positions() & room.block_positions())
+
+    def move(self, dx, dy):
+        for block in self.blocks:
+            block.move(dx, dy)
+
+    def rotate_clockwise(self):
+        for block in self.blocks:
+            block.rotate_clockwise()
+            
+    def borders(self):
+        for block in self.blocks:
+            for border in block.borders.values():
+                yield border
+
+    def door_borders(self):
+        for border in self.borders():
+            if border.can_has_door:
+                yield border
+
+    def place_doors(self, number, trapped=False):
+        borders = [border
+                           for border in self.borders()
+                           if not border.internal]
+                           
+        number = min(int(len(borders)/3), number)
+        # find extreme borders...
+        max_x, max_y = borders[0].position.point()
+        min_x, min_y = borders[0].position.point()
+        for border in borders:
+            x, y = border.position.point()
+            if x < min_x:
+                min_x = x
+            elif x > max_x:
+                max_x = x
+            if y < min_y:
+                min_y = y
+            if y > max_y:
+                max_y = y
+                 
+        mid_x = int((max_x + min_x)/2)
+        mid_y = int((max_y + min_y)/2)
+        # add extreme borders to list for more liklyhood of choice
+        temp = []
+        for border in borders:
+            x, y = border.position.point()
+            if x == max_x:
+                temp.append(border)
+            elif x == min_x:
+                temp.append(border)
+            elif x == mid_x:
+                temp.append(border)
+            if y == max_y:
+                temp.append(border)
+            elif y == min_y:
+                temp.append(border)
+            elif y == mid_y:
+                temp.append(border)
+            
+        [borders.append(border) for border in temp]
+        [borders.append(border) for border in temp]
+        
+        neighbors = set()
+        directions = set()
+        attempts = 0
+
+        while len(self.doors) < number and attempts < len(borders):
+            border = random.sample(borders, 1)[0]
+            check_position = border.position
+            check_direction = border.direction
+            okay = True
+            
+            if check_position in neighbors:  #borders an existing door
+                okay = False
+            elif len(list(directions)) < 4 and check_direction in directions:  #same wall...
+                okay = False
+            if okay == True:
+                neighbors.add(check_position)
+                border.can_has_door = True
+                door = Door()
+                door.borders.append(border)
+                door.rooms.append(self)
+                border.door = door
+                self.doors.append(door)
+                neighbors.update(border.position.area())
+                directions.add(check_direction)
+                if trapped == True:
+                    door.trapped = True
+            attempts += 1
+                      
+    def make_circle(self, diameter):
+        '''
+        Starts a circle from the firs position...
+        '''
+        start = self.blocks[0].position.point()
+        center = start
+        for i in range(-int(diameter/10),int(diameter/10),1):
+            for j in range(-int(diameter/10),int(diameter/10),1):
+                new_position = Position(start[0]+i,start[1]+j)
+                if (center[0]-new_position.point()[0])**2 + (center[1]-new_position.point()[1])**2 < (diameter/10)**2:
+                    new_block = Block(new_position)
+                    for block in self.blocks:
+                        block.sync_borders_with(new_block)
+                    self.blocks.append(new_block)
+        
+
+    def make_rectangle(self, width, height):
+        '''
+        Starts a circle from the firs position...
+        '''
+        start = self.blocks[0].position.point()
+        center = start
+        for i in range(int(width/5)):
+            for j in range(int(height/5)):
+                new_position = Position(start[0]+i,start[1]+j)
+                new_block = Block(new_position)
+                for block in self.blocks:
+                    block.sync_borders_with(new_block)
+                self.blocks.append(new_block)
+                
+    def make_tpassage(self):
+        '''
+        Passage extending 10 ft., then T intersection extending 10 ft. to the right and left
+        '''
+        direction = random.randint(1,4)
+        x = 1
+        y = 1
+        if direction == 1:
+            x = -1
+        if direction == 4:
+            y = -1
+        
+        print('tpassage')
+        start = self.blocks[0].position.point()
+        for i in range(random.randint(4,10)):
+            for j in range(4):
+                if i <= 1 or j == 1 or j == 2:
+                    if direction < 2:
+                        new_position = Position(start[0]+(i*x),start[1]+(j*y))
+                    else:    
+                        new_position = Position(start[0]+(j*x),start[1]+(i*y))
+                    new_block = Block(new_position)
+                    for block in self.blocks:
+                        block.sync_borders_with(new_block)
+                    self.blocks.append(new_block)
+                                     
+class Door():
+    """
+    A door.
+    """
+    __slots__ = ('borders', 'door_type', 'rooms', 'trapped')
+    
+    def __init__(self):
+        self.borders = []
+        self.rooms = []
+        d20 = random.randint(1,20)
+        if d20 <= 10:
+            self.door_type = 'Wooden'
+        elif d20 == 11 or d20 == 12:
+            self.door_type = 'Wooden, barred or locked'
+        elif d20 == 13:
+            self.door_type = 'Stone'
+        elif d20 == 14:	
+            self.door_type = 'Stone, barred or locked'
+        elif d20 ==15:	
+            self.door_type = 'Iron'
+        elif d20 ==16:	
+            self.door_type = 'Iron, barred or locked'
+        elif d20 ==17:	
+            self.door_type = 'Portcullis'
+        elif d20 ==18:	
+            self.door_type = 'Portcullis, locked in place'
+        elif d20 ==19:	
+            self.door_type = 'Secret door'
+        elif d20 ==20:	
+            self.door_type = 'Secret door, barred or locked'
+        self.trapped = False
+    
+class Corridor():
+    __slots__ = ('start_border', 'stop_border', 'path')
+
+    def __init__(self, start_border, stop_border, path):
+        self.start_border = start_border
+        self.stop_border = stop_border
+        self.path = path
+
+    def geometry_segments(self):
+        points = [self.start_border.connection_point()]
+
+        points.extend(position.move(0.5, 0.5).point() for position in self.path)
+
+        points.append(self.stop_border.connection_point())
+
+        return points
+
+class Dungeon():
+    __slots__ = ('rooms','corridors','level', 'info', 'parent')
+
+    def __init__(self, info=None, parent=None):
+        self.rooms = []
+        self.corridors = []
+        self.info = info
+        self.parent = parent
+        self.level = self.info['level']
+
+    def create_room(self, blocks, doors, trap=False, is_exit=True):
+        room = Room()
+        room.is_exit = is_exit
+
+        for i in range(blocks):
+            room.expand()
+
+        room.place_doors(doors, trap)
+
+        return room
+        
+    def create_rectangle_room(self, height, width, doors, stairs=False):
+        room = Room()
+
+        room.make_rectangle(height, width)
+
+        room.place_doors(doors)
+
+        return room
+
+    def create_circle_room(self, diameter, doors):
+        room = Room()
+
+        room.make_circle(diameter)
+
+        room.place_doors(doors)
+
+        return room
+        
+    def create_tpassage(self, doors):
+        room = Room()
+
+        room.make_tpassage()
+
+        room.place_doors(doors)
+        
+        return room
+       
+    def door_borders(self):
+        for room in self.rooms:
+            for border in room.door_borders():
+                if not border.used:
+                    yield border
+                    
+    def is_intersect_room(self, room):
+        return any(current_room.is_intersect(room) for current_room in self.rooms)
+
+    def room_positions_bruteforce(self, max_intersection_radius, new_room, dungeon_positions):
+        
+        filled_cells = {position.point() for position in dungeon_positions}
+
+
+        for max_distance in range(0, max_intersection_radius):
+            print(max_distance)
+            #for dungeon_door in self.door_borders():
+            for i, dungeon_door_object in enumerate(self.get_free_doors()):            
+                dungeon_door = dungeon_door_object.borders[0]
+                max_distance, dungeon_door, new_room_door, x, y = self.room_position_from_door(max_distance, new_room, dungeon_positions, dungeon_door)
+                if max_distance != -1:
+                    print('Good')
+                    print(max_distance, dungeon_door, new_room_door, x, y)
+                    yield (max_distance, dungeon_door, new_room_door, x, y)
+        
+    def room_position_from_door(self, max_intersection_radius, new_room, dungeon_positions, dungeon_door):
+        '''
+        dungeon_door = a door border, not a door object
+        '''
+        filled_cells = {position.point() for position in dungeon_positions}
+        if max_intersection_radius == None:
+            max_intersection_radius = 1
+        for new_room_door in new_room.door_borders():
+            for x, y in points_at_circle(*dungeon_door.position.point(), radius=max_intersection_radius):
+
+                for _ in range(4):
+                    new_room.rotate_clockwise()
+                    new_room.move(x - new_room_door.mirror().position.x,
+                                  y - new_room_door.mirror().position.y)
+                    
+
+                    check_position = new_room_door.position.point()[0] == dungeon_door.position.point()[0] or new_room_door.position.point()[1] == dungeon_door.position.point()[1]
+                   
+                    if dungeon_door.is_mirrored(new_room_door) and check_position and not self.check_blocks(new_room):
+                        print(dungeon_door.direction, new_room_door.direction, 'DING')
+                        return (max_intersection_radius, dungeon_door, new_room_door, x, y)
+                        
+        return (-1, None, None, None, None)
+
+    def check_blocks(self, new_room):
+        '''
+        checks if new_room overlaps any used blocks in the dungeon
+        '''
+        check_blocks = False
+        for block in new_room.blocks:
+            for room in self.rooms:
+                for dblock in room.blocks:
+                    if block.position.point() == dblock.position.point():
+                        check_blocks = True
+        return check_blocks
+                                    
+    def block_positions(self):
+        positions = set()
+
+        for room in self.rooms:
+            positions |= room.block_positions()
+            
+        return positions
+                
+    def expand(self, new_room, max_intersection_radius=1, current_door=None, stairway=False):
+
+        if len(self.rooms) == 0 or stairway:
+            self.rooms.append(new_room)
+            return True
+
+        dungeon_positions = self.block_positions()
+        
+        corridor_path = None
+        dungeon_door = None
+
+        # ATTENTION: method room_positions_bruteforce make modifications of new_room
+        #            it is not very good decission
+        
+        door = self.get_free_doors()[0]  #radiate out from oldest doors
+        dungeon_door = door.borders[0]
+        max_distance, dungeon_door, new_room_door, x, y = self.room_position_from_door(max_intersection_radius,
+                                                                                              new_room,
+                                                                                              dungeon_positions,
+                                                                                              dungeon_door)
+        try:                                                                                      
+            dungeon_door_out_position = dungeon_door.mirror().position
+            new_room_door_out_position = new_room_door.mirror().position
+
+            filled_positions = dungeon_positions | new_room.block_positions()
+        except AttributeError:
+            return False
+            
+        try:
+            path_length, corridor_path = find_path(dungeon_door_out_position,
+                                                   new_room_door_out_position,
+                                                   filled_cells=filled_positions,
+                                                   max_path_length=max_distance)
+        except IndexError:
+            return False
+
+        if path_length is None:
+            return False
+
+        # door is free and the positions are opposed      
+        try:
+            if len(dungeon_door.door.borders) < 2 and dungeon_door.is_mirrored(new_room_door) and len(new_room_door.door.borders) < 2:
+                # we're good...
+                door = dungeon_door.door
+                new_room.doors.pop(new_room.doors.index(new_room_door.door))
+                door.borders.append(new_room_door)
+                self.rooms.append(new_room)
+                new_room.doors.append(door)
+
+                new_corridor = Corridor(dungeon_door, new_room_door, corridor_path)
+
+                self.corridors.append(new_corridor)
+                
+                return True
+            else:
+                return False
+        except:
+            if dungeon_door != None:
+                self.remove_door(dungeon_door)
+            try:
+                del new_room_door
+            except:
+                print()
+            try:
+                del new_room
+            except:
+                print()
+            return False
+       
+    def starting_room(self):
+        """
+
+        """
+        d10 = random.randint(1,10)   
+        
+        # 1	Square, 20 × 20 ft.; passage on each wall
+        if d10 == 1:
+            new_room = self.create_rectangle_room(20,20,4)
+        # 2	Square, 20 × 20 ft.; door on two walls, passage in third wall
+        elif d10 == 2:
+            new_room = self.create_rectangle_room(20,20,3)
+        # 3	Square, 40 × 40 ft.; doors on three walls
+        elif d10 == 3:
+            new_room = self.create_rectangle_room(40,40,3)
+        # 4	Rectangle, 80 × 20 ft., with row of pillars down the middle; two passages leading from each long wall, doors on each short wall
+        elif d10 == 4:
+            if random.randint(1,2)==1:
+                new_room = self.create_rectangle_room(80,20,4)
+            else:
+                new_room = self.create_rectangle_room(20,80,4)
+        # 5	Rectangle, 20 × 40 ft.; passage on each wall
+        elif d10 == 5:
+            new_room = self.create_rectangle_room(20,40,4)
+        # 6	Circle, 40 ft. diameter; one passage at each cardinal direction
+        # 7	Circle, 40 ft. diameter; one passage in each cardinal direction; well in middle of room (might lead down to lower level)
+        elif d10 == 6 or d10 == 7:
+            new_room = self.create_circle_room(40,4)
+        # 8	Square, 20 × 20 ft.; door on two walls, passage on third wall, secret door on fourth wall
+        elif d10 == 8:
+            new_room = self.create_rectangle_room(20,20,4)
+        # 9	Passage, 10 ft. wide; T intersection
+        elif d10 == 9:
+            new_room = self.create_tpassage(3)
+        # 10	Passage, 10 ft. wide; four-way intersection
+        elif d10 == 10:
+            new_room = self.create_tpassage(4)
+         
+        self.expand(new_room)
+        check = False
+        while check == False:
+            check = self.expand(self.create_room(0,1,is_exit=True))
+            print('starting room exit',check)
+                  
+    def check_level(self, new):
+        '''
+        '''
+        nlevel = int(self.info['level']) + new
+        try:
+            a = self.parent.levels[nlevel]
+            return nlevel, True
+        except:
+            return nlevel, False
+    
+    def check_free_doors(self):
+        '''
+        '''
+        free_doors = 0
+        for room in self.rooms:
+            for door in room.doors:
+                if len(door.borders) == 1:
+                    free_doors += 1
+        return free_doors
+    
+    def get_free_doors(self):
+        doors = []
+        for room in self.rooms:
+            for door in room.doors:
+                if len(door.borders) == 1:
+                    doors.append(door)
+        return list(set(doors))
+    
+    def remove_door(self, door):
+        for border in door.borders:
+            border.used = False
+            border.can_has_door = False
+            border.door = None
+        for room in door.rooms:
+            try:
+                room.doors.pop(room.doors.index(door))
+            except:
+                print("door wasn't in room?")
+        del door
+    
+    def connect_free_doors(self, max_distance):
+        free_doors = self.get_free_doors()
+        for i, dungeon_door in enumerate(free_doors):
+            # grab other doors
+            for other_door in [a for a in free_doors if a is not dungeon_door]:
+                # correct sides of room
+                if dungeon_door.borders[0].mirror().direction == other_door.borders[0].direction and len(dungeon_door.borders) <= 1 and len(other_door.borders) <= 1: 
+                    tup = [(get_distance(dungeon_door.borders[0].position.point(), border.position.point()), border)
+                        for border in other_door.rooms[0].borders() if border.direction == other_door.borders[0].direction]
+                    mytup = min(tup, key=lambda x: x[0])
+                    if mytup[0] < max_distance:
+                        o_b = mytup[1]
+                        old_border = other_door.borders[0]
+                        
+                        o_r = other_door.rooms[0]
+                        # check all blocks that share the same direction as other door...
+                        try:
+                            filled_positions = dungeon_door.rooms[0].block_positions() | o_r.block_positions()
+                            #filled_positions.remove(o_b.mirror().position)
+            
+                            path_length, corridor_path = find_path(o_b.mirror().position,
+                                                                   dungeon_door.borders[0].mirror().position,
+                                                                   filled_cells=filled_positions,
+                                                                   max_path_length=max_distance)
+                        except:
+                            path_length = None
+
+                        print(path_length)
+                        if path_length != None:
+                            print(path_length)
+                            if path_length < max_distance:
+                                print(dungeon_door, other_door)
+                                # clear old border
+                                old_border.used = False
+                                old_border.can_has_door = False
+                                old_border.door = None
+                                # add new border/door
+                                o_b.door = dungeon_door
+                                o_b.can_has_door = True
+                                o_r.doors.pop(o_r.doors.index(other_door))
+                                o_r.doors.append(dungeon_door)
+                                dungeon_door.borders.append(o_b)
+                                dungeon_door.rooms.append(o_r)
+                                
+                
+                                path_length, corridor_path = find_path(o_b.mirror().position,
+                                                                       dungeon_door.borders[0].mirror().position,
+                                                                       filled_cells=filled_positions,
+                                                                       max_path_length=max_distance)
+                                new_corridor = Corridor(dungeon_door.borders[0], dungeon_door.borders[1], corridor_path)
+                                self.corridors.append(new_corridor)
+    
+    def add_area(self):
+        '''
+        Rolls on some tables from the DMG
+        '''
+        stairs = False
+        room_added = False
+        free_doors = self.check_free_doors()
+        tries = 0
+        while free_doors >= 1 and room_added == False:
+            tries += 1
+            
+            if tries > 10:
+                print(tries, free_doors, room_added)
+            if random.randint(1,100) >= 99+(self.level*self.level)-len(self.rooms):
+                ## EXIT
+                new_room = self.create_room(0,1,is_exit=True)
+            else:
+                d20 = random.randint(1,20)
+                print('d20', d20)
+                if d20 <= 2:
+                    # Passage extending 10 ft., then T intersection extending 10 ft. to the right and left
+                    new_room = self.create_tpassage(3)
+                elif d20 > 2 and d20 <= 8:
+                    # Passage 20 ft. straight ahead
+                    new_room = self.create_rectangle_room(10*random.randint(2,8),10,random.randint(3,4))
+                elif d20 >= 9 and d20 <= 18:
+                    # Chamber
+                    nd20 = random.randint(1,20)
+                    ndoors = random.randint(1,4)
+                    if nd20 <= 2:	
+                        #Square, 20 × 20 ft.1
+                        new_room = self.create_rectangle_room(20,20,1+ndoors)
+                    elif nd20 == 3 or nd20 == 4:
+                        # Square, 30 × 30 ft.1
+                        new_room = self.create_rectangle_room(30,30,1+ndoors)
+                    elif nd20 == 5 or nd20 == 6:
+                        # Square, 40 × 40 ft.1
+                        new_room = self.create_rectangle_room(40,40,1+ndoors)
+                    elif nd20 >= 7 and nd20 <= 8:
+                        #	Rectangle, 20 × 30 ft.1
+                        new_room = self.create_rectangle_room(20,30,1+ndoors)
+                    elif nd20 == 9:
+                        new_room = self.create_rectangle_room(30,20,1+ndoors)
+                    elif nd20 >= 10 or nd20 <= 11:
+                        #	Rectangle, 30 × 40 ft.1
+                        new_room = self.create_rectangle_room(30,40,1+ndoors)
+                    elif nd20 == 12:
+                        #	Rectangle, 30 × 40 ft.1
+                        new_room = self.create_rectangle_room(40,30,1+ndoors)
+                    elif nd20 == 13:
+                        #	Rectangle, 40 × 50 ft.2
+                        new_room = self.create_rectangle_room(40,50,2+ndoors)
+                    elif nd20 == 14:
+                        #	Rectangle, 40 × 50 ft.2
+                        new_room = self.create_rectangle_room(50,40,2+ndoors)
+                    elif nd20 == 15:
+                        #	Rectangle, 50 × 80 ft.2
+                        if random.randint(1,2) == 1:
+                            new_room = self.create_rectangle_room(50,80,1+ndoors)
+                        else:
+                            new_room = self.create_rectangle_room(80,50,1+ndoors)
+                    elif nd20 == 16:
+                        #	Circle, 30 ft. diameter1
+                        new_room = self.create_circle_room(30,1+ndoors)
+                    elif nd20 == 17:
+                        #	Circle, 50 ft. diameter2
+                        new_room = self.create_circle_room(50,2+ndoors)
+                    elif nd20 == 18:
+                        #   Octagon, 40 × 40 ft.2
+                        new_room = self.create_circle_room(40,2+ndoors)
+                    elif nd20 == 19:
+                        #	Octagon, 60 × 60 ft.2
+                        new_room = self.create_circle_room(60,2+ndoors)
+                    elif nd20 == 20:
+                        #	Trapezoid, roughly 40 × 60 ft.2
+                        if random.randint(1,2) == 1:
+                            new_room = self.create_rectangle_room(40,60,1+ndoors)
+                        else:
+                            new_room = self.create_rectangle_room(60,40,1+ndoors)
+              
+                #### THIS IS A THING THAT NEEDS WORK ####
+                elif d20 == 19:
+                    # Stairs
+                    stairs = True
+                    
+                elif d20 == 20:
+                    #False door with trap
+                    new_room = self.create_room(0,1,trap=True)
+                    
+            #last bit...
+            if stairs:
+                # stair code...
+                new_levels = []
+                room_added = False
+                new_room = self.create_rectangle_room(10,10,1)
+                nd20 = random.randint(1,20)
+
+                if nd20 <= 12 or nd20 == 16 or nd20 == 18:
+                    # Down one level to a chamber
+                    nlevel, check = self.check_level(-1)
+                elif nd20 >= 13 and nd20 <= 15 or nd20 == 17 or nd20 >= 19:
+                    #	Up one level to a chamber
+                    nlevel, check = self.check_level(1)
+                print('stair check',nd20, nlevel,check)
+                if check:
+                    mirror_room = Room()
+                    mirror_room.color = new_room.color
+                    mirror_room.blocks = []
+                    if self.expand(new_room):
+                        for block in new_room.blocks:
+                            x, y = block.position.point()
+                            new_block = Block(Position(x, y))
+                            for nblock in mirror_room.blocks:
+                                nblock.sync_borders_with(new_block)
+                            mirror_room.blocks.append(new_block)
+                        mirror_room.place_doors(1)
+                        room_added = self.parent.levels[nlevel].expand(mirror_room, stairway=True)
+                        if room_added == False:
+                            self.rooms.pop(new_room)
+            else:
+                    room_added = self.expand(new_room)
+            if tries > 10:
+                self.remove_door(self.get_free_doors()[0])
+                
+                
+            self.connect_free_doors(max_distance=2)

@@ -1,2 +1,7 @@
 level	walls	floors	ceilings	purpose	Monster (dominant inhabitant)	Monster (pet or allied creature)	Monster (random creature)	
-0	plastered limestone painted with murals that reflect the room's function	granite flagstones	stone arches	Stronghold	goblins	giant spiders	gelatinous cube, giant rats, rat swarm  
+0	plastered limestone painted with murals that reflect the room's function, damaged by graffiti	5ft granite flagstones	stone arches	Stronghold	goblins, redcaps	giant spiders	gelatinous cube, giant rats, rat swarm
+-1	plastered limestone painted with murals that reflect the room's function	stone tiles 5ft in width	rotting wooden beams	General Dungeon Chambers	goblins, redcaps	giant rats,  rat swarms, mimics
+-2	Stone walls held up by beams that show evidence of mining	floors with old mine tracks	rough hewn stone	Mine	goblins, redcaps, slaves	giant spiders, giant rats	rat swarm, gelatinous cube, mimmic, rust monster
+-3	Carved limestone walls with niches filled with humans bones	5ft limestone blocks	granite arches holding up linestone carved ceilings	Tomb	ghouls, 	ghasts, skeletons	zombies, carrion crawlers, shadows, wights,  wraiths
+-5	Granite walls carved with demonic faces	tower floors, covered in decorative tiles	stone arches featuring nagelic figures	Treasure Vault	Lich (passive)	blink dogs, worgs, owlbears	sprites, mimics, invisible stalkers, elementals
+-4	 dark stone walls covered in warning graffiti and hanging mosses/cobwebs	5ft red marble stone tiles	dark stone with stone rafters and hanging mosses	Death Trap	phase spiders 	giant spiders, wolf spiders	mimics, gelatinous cubes, rust monsters, carrion crawlers, skeletons, ghosts, wil-o-wisps
