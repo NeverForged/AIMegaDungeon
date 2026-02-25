@@ -1,0 +1,6 @@
+d100,CR 0-4,CR 5-10,CR 11-16,CR 17+
+01-30,5d6 cp,4d6x100 cp,4d6x100 sp,2d6x1000 ep
+31-60,4d6 sp,6d6x10 sp,1d6x100 ep,1d6x1000 gp
+61-70,3d6 ep,1d6x100 gp,2d6x100 gp,1d6x1000 pp
+71-95,3d6 gp,4d6x10 pp,1d6x100 pp,2d6x100 pp
+96-00,1d6 pp,2d6x10 pp,2d6x100 pp,2d6x100 pp

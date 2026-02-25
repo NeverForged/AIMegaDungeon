@@ -41,7 +41,7 @@ class AIMegaDungeon:
         if filename != None: #load the old file
             new = self.load(filename)
             self.filename = filename        
-            self.leveldf = pd.read_csv(self.file_path(levels), sep='\t')
+            self.levelsdf = pd.read_csv(self.file_path(levels), sep='\t')
             new = 1
         if new == 0: # need a new instance
             self.filename = 'test' # input('Name this dungeon:')
@@ -52,11 +52,87 @@ class AIMegaDungeon:
             with open(self.file_path('AppendixA.pickle'), 'rb') as file:   
                 self.AppendixA = pickle.load(file)
             print('Dungeon {} Created'.format(filename))
+            
+        self.char_level_ave = 1
 
  
     ## ADMIN FUNCTIONS
     def file_path(self, filename):
         return os.path.join(self.current_dir, '{}'.format(filename))
+        
+    def roll_table(self, df):
+        droll = rand.randint(1,max(df['Roll']))
+        return df[df['Roll']==droll]['Result'].values[0]
+        
+    def get_treasure(self, CR, hoard=False):
+        '''
+        '''
+        treasure = 'No Extra Treasure'
+        while treasure == 'No Extra Treasure':
+            d100 = random.randint(1,100)
+            rCR = 'CR 17+'
+            if CR <= 4:
+                rCR = 'CR 0-4'
+            elif CR >= 5 and CR <= 10:
+                rCR = 'CR 5-10'
+            elif CR >=11 and CR <= 16:
+                rCR = 'CR 11-16'
+            
+            if hoard:
+                df = pd.read_csv(self.file_path('hoard treasure.csv'))
+                rCR = rCR + ' Hoard'
+                if d100 <= 6:
+                    row = 0
+                elif d100 >= 7 and d100 <= 16:
+                    row = 1
+                elif d100 >= 17 and d100 <= 26:
+                    row = 2
+                elif d100 >= 27 and d100 <= 36:
+                    row = 3
+                elif d100 >= 37 and d100 <= 44:
+                    row = 4
+                elif d100 >= 45 and d100 <= 52:
+                    row = 5
+                elif d100 >= 53 and d100 <= 60:
+                    row = 6
+                elif d100 >= 61 and d100 <= 65:
+                    row = 7
+                elif d100 >= 66 and d100 <= 70:
+                    row = 8
+                elif d100 >= 71 and d100 <= 100:
+                    row = 9
+            else:
+                df = pd.read_csv(self.file_path('individual treasure.csv'))
+                if d100 <= 30:
+                    row = 0
+                elif d100 >= 31 and d100 <= 60:
+                    row = 1
+                elif d100 >= 61 and d100 <= 70:
+                    row = 2
+                elif d100 >= 71 and d100 <= 95:
+                    row = 3
+                elif d100 >= 96 and d100 <= 100:
+                    row = 4
+                    
+            treasure = df[rCR].values[row]
+            tlist = treasure.split(' ')
+            ntlist = []
+            for item in tlist: 
+                if len(item) >= 2:
+                    if item[1] == 'd':
+                        temp = ''
+                        lst = item.split('x')
+                        n = int(lst[0].split('d')[0])
+                        d = int(lst[0].split('d')[1])
+                        temp = random.randint(n,n*d)
+                        if len(lst)==2:
+                            temp = temp*int(lst[1])
+                        item = '{}'.format(temp)
+                ntlist.append(item)
+            treasure = ' '.join(ntlist)
+        return treasure
+        
+        
     
     """
     def load(self, filename=None):
@@ -992,6 +1068,18 @@ def get_distance(tup1, tup2):
     y = tup2[1]-tup1[1]
     return (x**2 + y**2)**(0.5)
     
+def direction_to_compass(direction):
+    if direction == DIRECTION.LEFT:
+        return 'West'
+    elif direction == DIRECTION.RIGHT:
+        return 'East'
+    elif direction == DIRECTION.UP:
+        return 'North'
+    elif direction == DIRECTION.DOWN:
+        return 'South'
+    else:
+        return direction
+    
 ##############
 # Core classes
 ##############
@@ -1118,6 +1206,28 @@ class Border():
         if self.direction == DIRECTION.DOWN:
             return [self.position.move(1, 0).point(),
                     self.position.move(0, 0).point()]
+    
+     
+    def wall_geometry_borders(self):
+        '''
+        creates the geometry of the wall borders
+        '''
+        
+        if self.direction == DIRECTION.LEFT:
+            return [self.position.move(-1, -1).point(),
+                    self.position.move(-1, 0).point()]
+
+        if self.direction == DIRECTION.RIGHT:
+            return [self.position.move(2, 2).point(),
+                    self.position.move(2, 1).point()]
+
+        if self.direction == DIRECTION.UP:
+            return [self.position.move(1, 2).point(),
+                    self.position.move(2, 2).point()]
+
+        if self.direction == DIRECTION.DOWN:
+            return [self.position.move(0, -1).point(),
+                    self.position.move(-1, -1).point()]
 
     def rotate_clockwise(self):
         '''
@@ -1174,6 +1284,15 @@ class Block():
         return [border.geometry_borders()
                 for border in self.borders.values()
                 if not border.internal]
+                
+    def wall_geometry_borders(self):
+        '''
+        returns the borders that are external vs internal to the room
+        '''
+        return [border.wall_geometry_borders()
+                for border in self.borders.values()
+                if not border.internal]
+                
     
     def grid_borders(self):
         '''
@@ -1211,14 +1330,27 @@ class Room():
     '''
     A collection of blocks...
     '''
-    __slots__ = ('blocks','color', 'doors', 'is_exit')
+    __slots__ = ('room_id', 'blocks','color', 'doors', 'is_exit', 'purpose', 'state', 'contents', 'parent', 'monster', 'treasure', 'furnishings', 'traps', 'hazards', 'hallway', 'stairs')
 
-    def __init__(self, position=Position(0,0)):
+    def __init__(self, parent, position=Position(0,0), hallway=False, stairs=None, is_exit=False):      
         self.blocks = [Block(position)]
         self.color = random_color()
         self.doors = []
-        self.is_exit = False
-
+        self.is_exit = is_exit
+        self.purpose = ''
+        self.state = ''
+        self.contents = ''
+        self.parent = parent
+        self.room_id = len(self.parent.rooms)
+        self.hallway = hallway
+        self.stairs = stairs
+        self.monster = ''
+        self.treasure  = ''
+        self.furnishings = []
+        self.traps = ''
+        self.hazards = ''
+        self.stock_room(hallway)
+        
     def block_positions(self):
         return {block.position for block in self.blocks}
 
@@ -1277,6 +1409,18 @@ class Room():
             borders.extend(block.geometry_borders())
 
         return borders
+        
+    def wall_geometry_borders(self):
+        '''
+        gives outer borders of room
+        '''
+        borders = []
+
+        for block in self.blocks:
+            borders.extend(block.wall_geometry_borders())
+
+        return borders
+        
         
     def grid_borders(self):
         '''
@@ -1371,38 +1515,71 @@ class Room():
         # find extreme borders...
         max_x, max_y = borders[0].position.point()
         min_x, min_y = borders[0].position.point()
+        max_x_num, max_y_num, min_x_num, min_y_num = 0, 0, 0, 0
+        min_distance_to_center = 90001
+        
         for border in borders:
             x, y = border.position.point()
             if x < min_x:
                 min_x = x
+                min_x_num = 0
             elif x > max_x:
                 max_x = x
+                max_x_num = 0
             if y < min_y:
                 min_y = y
-            if y > max_y:
+                min_y_num = 0
+            elif y > max_y:
                 max_y = y
+                max_y_num = 0
+                
+            if x == max_x:
+                max_x_num += 1
+            elif x == min_x:
+                min_x_num += 1
+            if y == max_y:
+                max_y_num += 1
+            elif y == min_y:
+                min_y_num += 1
+            distance_to_center = get_distance((0,0), (x,y))
+            if distance_to_center < min_distance_to_center:
+                min_distance_to_center = distance_to_center
                  
         mid_x = int((max_x + min_x)/2)
         mid_y = int((max_y + min_y)/2)
+        check_xy = max(min_x_num, max_x_num, min_y_num, min_x_num) + 1
+        
         # add extreme borders to list for more liklyhood of choice
-        temp = []
+        temp = [border
+                           for border in self.borders()
+                           if not border.internal]
         for border in borders:
             x, y = border.position.point()
+
             if x == max_x:
-                temp.append(border)
+                [temp.append(border) for _ in range(check_xy-max_x_num)]
             elif x == min_x:
-                temp.append(border)
-            elif x == mid_x:
-                temp.append(border)
-            if y == max_y:
-                temp.append(border)
-            elif y == min_y:
-                temp.append(border)
-            elif y == mid_y:
-                temp.append(border)
+                [temp.append(border) for _ in range(check_xy-min_x_num)]
+            elif x >= mid_x-1 and x <= mid_x + 1 and y <= max_y-1 and y >= min_y+1:
+                [temp.append(border) for _ in range(int(check_xy))]
             
-        [borders.append(border) for border in temp]
-        [borders.append(border) for border in temp]
+            if y == max_y:
+                [temp.append(border) for _ in range(check_xy-max_y_num)]
+            elif y == min_y:
+                [temp.append(border) for _ in range(check_xy-min_y_num)]
+            
+            elif y >= mid_y - 1 and y >= mid_y+1 and x <= max_x-1 and x >= min_x+1:
+                [temp.append(border) for _ in range(int(check_xy))]
+
+        
+        if borders == []:
+            borders = [border
+                           for border in self.borders()
+                           if not border.internal]
+                          
+        
+        # make areas closest to the center more likely...
+        
         
         neighbors = set()
         directions = set()
@@ -1421,7 +1598,7 @@ class Room():
             if okay == True:
                 neighbors.add(check_position)
                 border.can_has_door = True
-                door = Door()
+                door = Door(parent=self)
                 door.borders.append(border)
                 door.rooms.append(self)
                 border.door = door
@@ -1438,8 +1615,8 @@ class Room():
         '''
         start = self.blocks[0].position.point()
         center = start
-        for i in range(-int(diameter/10),int(diameter/10),1):
-            for j in range(-int(diameter/10),int(diameter/10),1):
+        for i in range(-int(diameter/10)-2,int(diameter/10)+2,1):
+            for j in range(-int(diameter/10)-2,int(diameter/10)+2,1):
                 new_position = Position(start[0]+i,start[1]+j)
                 if (center[0]-new_position.point()[0])**2 + (center[1]-new_position.point()[1])**2 < (diameter/10)**2:
                     new_block = Block(new_position)
@@ -1447,8 +1624,7 @@ class Room():
                         block.sync_borders_with(new_block)
                     self.blocks.append(new_block)
         
-
-    def make_rectangle(self, width, height):
+    def make_rectangle(self, width, height, hallway=False):
         '''
         Starts a circle from the firs position...
         '''
@@ -1461,7 +1637,7 @@ class Room():
                 for block in self.blocks:
                     block.sync_borders_with(new_block)
                 self.blocks.append(new_block)
-                
+                               
     def make_tpassage(self):
         '''
         Passage extending 10 ft., then T intersection extending 10 ft. to the right and left
@@ -1476,9 +1652,9 @@ class Room():
         
         print('tpassage')
         start = self.blocks[0].position.point()
-        for i in range(random.randint(4,10)):
-            for j in range(4):
-                if i <= 1 or j == 1 or j == 2:
+        for i in range(random.randint(9,12)):
+            for j in range(8):
+                if i <= 1 or j == 3 or j == 4:
                     if direction < 2:
                         new_position = Position(start[0]+(i*x),start[1]+(j*y))
                     else:    
@@ -1487,14 +1663,91 @@ class Room():
                     for block in self.blocks:
                         block.sync_borders_with(new_block)
                     self.blocks.append(new_block)
-                                     
+  
+    def clear_room(self, clear_all = True):
+        
+        self.contents = 'Empty room'
+        self.monster = ''
+        self.traps = ''
+        self.hazards = ''
+        self.treasure = ''
+        if clear_all:
+            self.furnishings = []
+        
+    def stock_room(self, hallway=False):
+        '''
+        '''
+        # Purpose, it's that little flame...
+        if self.hallway:
+            self.purpose = 'Hallway'
+        elif self.stairs != None:
+            self.purpose = 'Stairs'
+        elif self.is_exit == True:
+            self.purpose = 'Exit (not a real room)'
+            self.color = '#000000'
+        else:
+            try:
+                self.purpose = self.parent.parent.roll_table(self.parent.parent.AppendixA['Purpose'][self.parent.info['purpose']])
+            except KeyError:
+                print('Dungeon Purpose Broken')
+                self.purpose = self.parent.parent.roll_table(self.parent.parent.AppendixA['Purpose']['General Dungeon Chambers'])
+        self.state = self.parent.parent.roll_table(self.parent.parent.AppendixA['Current_Chamber_State'])
+
+        if self.hallway == True or self.stairs != None or self.is_exit == True:
+            self.contents = 'Empty room'
+        else:
+            self.contents =  self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Chamber Contents'])
+        
+            if 'Monster' in self.contents:
+                mon_type = self.contents.split(')')[0]+')'
+                monlist = self.parent.info[mon_type].split(', ')
+                self.monster = random.sample(monlist,1)[0]
+                self.monster = '{} [Motivation: {}]'.format(self.monster, self.parent.parent.roll_table(self.parent.parent.AppendixA['Monster Motivation']))
+                
+            if 'Hazard' in self.contents:
+                self.hazards = self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Hazards'])
+                
+            if 'Obstacle' in self.contents:
+                self.hazards = self.parent.parent.roll_table(self.parent.parent.AppendixA['Obstacles'])
+            
+            if 'Trap' in self.contents:
+                self.traps = 'Trap({}):{} [Trigger: {}]'.format(self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Damage Severity'])
+                                                             , self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Effects'])
+                                                             , self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Trigger']))
+            if 'Trick' in self.contents:
+                tobj = self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Tricks']['Trick Objects'])
+                self.traps = 'Trick {}: {}'.format(tobj, self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Tricks']['Tricks']))
+                self.furnishings.append('General Features: {}'.format(tobj))
+                
+            if 'treasure' in self.contents:
+                CR = 3+2*abs(int((self.parent.info['level'])))
+                if 'incidental' in self.contents:
+                    hoard = False
+                else:
+                    hoard = True
+                self.treasure = self.parent.parent.get_treasure(CR, hoard)
+        
+        
+        for key in self.parent.parent.AppendixA['Dungeon Dressings'].keys():
+            if key != 'Specific' and 'General' not in key:
+                self.furnishings.append('{}: {}'.format(key, self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Dressings'][key])))
+            if 'General' in key and self.hallway == False and self.stairs == None:
+                for i in range(random.randint(1,len(self.doors)+1)):
+                    self.furnishings.append('{}: {}'.format(key, self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Dressings'][key])))
+            if key == 'Specific':
+                for skey in self.parent.parent.AppendixA['Dungeon Dressings'][key]:
+                    for a in skey.split(' '):
+                        if a.lower() in self.purpose.lower():
+                            self.furnishings.append('{}: {}'.format('General Furnishings and Appointments', self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Dressings'][key][skey])))
+                                         
 class Door():
     """
     A door.
     """
-    __slots__ = ('borders', 'door_type', 'rooms', 'trapped')
+    __slots__ = ('parent', 'borders', 'door_type', 'rooms', 'trapped', 'trap')
     
-    def __init__(self):
+    def __init__(self, parent):
+        self.parent = parent
         self.borders = []
         self.rooms = []
         d20 = random.randint(1,20)
@@ -1519,6 +1772,9 @@ class Door():
         elif d20 ==20:	
             self.door_type = 'Secret door, barred or locked'
         self.trapped = False
+        if self.trapped == True:
+            self.traps = 'Trap({}):{} [Trigger: Opening the door]'.format(self.parent.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Damage Severity'])
+                                                         , self.parent.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Effects']))
     
 class Corridor():
     __slots__ = ('start_border', 'stop_border', 'path')
@@ -1548,8 +1804,7 @@ class Dungeon():
         self.level = self.info['level']
 
     def create_room(self, blocks, doors, trap=False, is_exit=True):
-        room = Room()
-        room.is_exit = is_exit
+        room = Room(self, is_exit=is_exit)
 
         for i in range(blocks):
             room.expand()
@@ -1558,8 +1813,8 @@ class Dungeon():
 
         return room
         
-    def create_rectangle_room(self, height, width, doors, stairs=False):
-        room = Room()
+    def create_rectangle_room(self, height, width, doors, stairs=None, hallway=False):
+        room = Room(self, stairs=stairs, hallway=hallway)
 
         room.make_rectangle(height, width)
 
@@ -1568,7 +1823,7 @@ class Dungeon():
         return room
 
     def create_circle_room(self, diameter, doors):
-        room = Room()
+        room = Room(self)
 
         room.make_circle(diameter)
 
@@ -1577,7 +1832,7 @@ class Dungeon():
         return room
         
     def create_tpassage(self, doors):
-        room = Room()
+        room = Room(self, hallway=True)
 
         room.make_tpassage()
 
@@ -1660,68 +1915,70 @@ class Dungeon():
             self.rooms.append(new_room)
             return True
 
-        dungeon_positions = self.block_positions()
-        
-        corridor_path = None
-        dungeon_door = None
-
-        # ATTENTION: method room_positions_bruteforce make modifications of new_room
-        #            it is not very good decission
-        
-        door = self.get_free_doors()[0]  #radiate out from oldest doors
-        dungeon_door = door.borders[0]
-        max_distance, dungeon_door, new_room_door, x, y = self.room_position_from_door(max_intersection_radius,
-                                                                                              new_room,
-                                                                                              dungeon_positions,
-                                                                                              dungeon_door)
-        try:                                                                                      
-            dungeon_door_out_position = dungeon_door.mirror().position
-            new_room_door_out_position = new_room_door.mirror().position
-
-            filled_positions = dungeon_positions | new_room.block_positions()
-        except AttributeError:
-            return False
+        elif self.check_free_doors() > 0:
+            dungeon_positions = self.block_positions()
             
-        try:
-            path_length, corridor_path = find_path(dungeon_door_out_position,
-                                                   new_room_door_out_position,
-                                                   filled_cells=filled_positions,
-                                                   max_path_length=max_distance)
-        except IndexError:
-            return False
+            corridor_path = None
+            dungeon_door = None
 
-        if path_length is None:
-            return False
+            # ATTENTION: method room_positions_bruteforce make modifications of new_room
+            #            it is not very good decission
+            
+            door = self.get_free_doors()[0]  #radiate out from oldest doors
+            dungeon_door = door.borders[0]
+            max_distance, dungeon_door, new_room_door, x, y = self.room_position_from_door(max_intersection_radius,
+                                                                                                  new_room,
+                                                                                                  dungeon_positions,
+                                                                                                  dungeon_door)
+            try:                                                                                      
+                dungeon_door_out_position = dungeon_door.mirror().position
+                new_room_door_out_position = new_room_door.mirror().position
 
-        # door is free and the positions are opposed      
-        try:
-            if len(dungeon_door.door.borders) < 2 and dungeon_door.is_mirrored(new_room_door) and len(new_room_door.door.borders) < 2:
-                # we're good...
-                door = dungeon_door.door
-                new_room.doors.pop(new_room.doors.index(new_room_door.door))
-                door.borders.append(new_room_door)
-                self.rooms.append(new_room)
-                new_room.doors.append(door)
-
-                new_corridor = Corridor(dungeon_door, new_room_door, corridor_path)
-
-                self.corridors.append(new_corridor)
-                
-                return True
-            else:
+                filled_positions = dungeon_positions | new_room.block_positions()
+            except AttributeError:
                 return False
-        except:
-            if dungeon_door != None:
-                self.remove_door(dungeon_door)
+                
             try:
-                del new_room_door
-            except:
-                print()
+                path_length, corridor_path = find_path(dungeon_door_out_position,
+                                                       new_room_door_out_position,
+                                                       filled_cells=filled_positions,
+                                                       max_path_length=max_distance)
+            except IndexError:
+                return False
+
+            if path_length is None:
+                return False
+
+            # door is free and the positions are opposed      
             try:
-                del new_room
+                if len(dungeon_door.door.borders) < 2 and dungeon_door.is_mirrored(new_room_door) and len(new_room_door.door.borders) < 2:
+                    # we're good...
+                    door = dungeon_door.door
+                    new_room.doors.pop(new_room.doors.index(new_room_door.door))
+                    door.borders.append(new_room_door)
+                    self.rooms.append(new_room)
+                    new_room.doors.append(door)
+
+                    new_corridor = Corridor(dungeon_door, new_room_door, corridor_path)
+
+                    self.corridors.append(new_corridor)
+                    
+                    return True
+                else:
+                    return False
             except:
-                print()
-            return False
+                if dungeon_door != None:
+                    self.remove_door(dungeon_door)
+                try:
+                    del new_room_door
+                except:
+                    print()
+                try:
+                    del new_room
+                except:
+                    print()
+                return False
+        return False
        
     def starting_room(self):
         """
@@ -1809,56 +2066,130 @@ class Dungeon():
     
     def connect_free_doors(self, max_distance):
         free_doors = self.get_free_doors()
-        for i, dungeon_door in enumerate(free_doors):
-            # grab other doors
-            for other_door in [a for a in free_doors if a is not dungeon_door]:
-                # correct sides of room
-                if dungeon_door.borders[0].mirror().direction == other_door.borders[0].direction and len(dungeon_door.borders) <= 1 and len(other_door.borders) <= 1: 
-                    tup = [(get_distance(dungeon_door.borders[0].position.point(), border.position.point()), border)
-                        for border in other_door.rooms[0].borders() if border.direction == other_door.borders[0].direction]
-                    mytup = min(tup, key=lambda x: x[0])
-                    if mytup[0] < max_distance:
-                        o_b = mytup[1]
-                        old_border = other_door.borders[0]
-                        
-                        o_r = other_door.rooms[0]
-                        # check all blocks that share the same direction as other door...
-                        try:
-                            filled_positions = dungeon_door.rooms[0].block_positions() | o_r.block_positions()
-                            #filled_positions.remove(o_b.mirror().position)
-            
-                            path_length, corridor_path = find_path(o_b.mirror().position,
-                                                                   dungeon_door.borders[0].mirror().position,
-                                                                   filled_cells=filled_positions,
-                                                                   max_path_length=max_distance)
-                        except:
-                            path_length = None
+        connections = []
 
-                        print(path_length)
-                        if path_length != None:
-                            print(path_length)
-                            if path_length < max_distance:
-                                print(dungeon_door, other_door)
-                                # clear old border
-                                old_border.used = False
-                                old_border.can_has_door = False
-                                old_border.door = None
-                                # add new border/door
-                                o_b.door = dungeon_door
-                                o_b.can_has_door = True
-                                o_r.doors.pop(o_r.doors.index(other_door))
-                                o_r.doors.append(dungeon_door)
-                                dungeon_door.borders.append(o_b)
-                                dungeon_door.rooms.append(o_r)
-                                
-                
-                                path_length, corridor_path = find_path(o_b.mirror().position,
-                                                                       dungeon_door.borders[0].mirror().position,
-                                                                       filled_cells=filled_positions,
-                                                                       max_path_length=max_distance)
-                                new_corridor = Corridor(dungeon_door.borders[0], dungeon_door.borders[1], corridor_path)
-                                self.corridors.append(new_corridor)
-    
+        for dungeon_door in free_doors:
+
+            for other_door in free_doors:
+
+                if other_door is dungeon_door:
+                    continue
+
+                # --- Doors must face each other ---
+                if dungeon_door.borders[0].mirror().direction != other_door.borders[0].direction:
+                    continue
+
+                room_a = dungeon_door.rooms[0]
+                room_b = other_door.rooms[0]
+
+                if room_a is room_b:
+                    continue
+
+                # -------------------------------------------------
+                # Candidate borders on each room (external only)
+                # -------------------------------------------------
+
+                dborders = [
+                    b for b in room_a.borders()
+                    if not b.internal
+                    and b.direction == dungeon_door.borders[0].direction
+                ]
+
+                oborders = [
+                    b for b in room_b.borders()
+                    if not b.internal
+                    and b.direction == other_door.borders[0].direction
+                ]
+
+                if not dborders or not oborders:
+                    continue
+
+                # -------------------------------------------------
+                # Find closest border pair
+                # -------------------------------------------------
+
+                candidates = []
+
+                for db in dborders:
+                    for ob in oborders:
+                        dist = get_distance(
+                            db.position.point(),
+                            ob.position.point()
+                        )
+                        candidates.append((dist, db, ob))
+
+                dist, db, ob = min(candidates, key=lambda x: x[0])
+
+                if dist >= max_distance:
+                    continue
+
+                # -------------------------------------------------
+                # Pathfinding validation
+                # -------------------------------------------------
+
+                try:
+                    filled = room_a.block_positions() | room_b.block_positions()
+
+                    path_length, path = find_path(
+                        ob.mirror().position,
+                        db.mirror().position,
+                        filled_cells=filled,
+                        max_path_length=max_distance
+                    )
+                except Exception:
+                    path_length = None
+
+                if path_length is None or path_length >= max_distance:
+                    continue
+
+                # =================================================
+                # ✅ VALID CONNECTION — MOVE SINGLE DOOR OBJECT
+                # =================================================
+
+                # ---- Clear OLD borders (door currently occupies them) ----
+                for border in dungeon_door.borders:
+                    border.used = False
+                    border.can_has_door = False
+                    border.door = None
+
+                for border in other_door.borders:
+                    border.used = False
+                    border.can_has_door = False
+                    border.door = None
+
+                # ---- Remove other_door from its room ----
+                if other_door in room_b.doors:
+                    room_b.doors.remove(other_door)
+
+                # -------------------------------------------------
+                # Assign NEW borders to dungeon_door
+                # -------------------------------------------------
+
+                dungeon_door.borders = [db, ob]
+
+                db.used = ob.used = True
+                db.can_has_door = ob.can_has_door = True
+                db.door = ob.door = dungeon_door
+
+                # ---- Update room connections ----
+                if room_b not in dungeon_door.rooms:
+                    dungeon_door.rooms.append(room_b)
+
+                if dungeon_door not in room_b.doors:
+                    room_b.doors.append(dungeon_door)
+
+                # -------------------------------------------------
+                # Create corridor
+                # -------------------------------------------------
+
+                new_corridor = Corridor(db, ob, path)
+                self.corridors.append(new_corridor)
+
+                connections.append((room_a, room_b, dungeon_door))
+
+        return connections
+        
+        
     def add_area(self):
         '''
         Rolls on some tables from the DMG
@@ -1869,10 +2200,13 @@ class Dungeon():
         tries = 0
         while free_doors >= 1 and room_added == False:
             tries += 1
-            
+            free_doors = self.check_free_doors()
             if tries > 10:
                 print(tries, free_doors, room_added)
-            if random.randint(1,100) >= 99+(self.level*self.level)-len(self.rooms):
+            exit_chance = 95-self.info['level'] - int(len(self.rooms)/10)
+            if exit_chance > 100:
+                exit_chance = 100
+            if random.randint(1,100) >= exit_chance:
                 ## EXIT
                 new_room = self.create_room(0,1,is_exit=True)
             else:
@@ -1883,7 +2217,7 @@ class Dungeon():
                     new_room = self.create_tpassage(3)
                 elif d20 > 2 and d20 <= 8:
                     # Passage 20 ft. straight ahead
-                    new_room = self.create_rectangle_room(10*random.randint(2,8),10,random.randint(3,4))
+                    new_room = self.create_rectangle_room(10*random.randint(2,10),10,random.randint(3,4))
                 elif d20 >= 9 and d20 <= 18:
                     # Chamber
                     nd20 = random.randint(1,20)
@@ -1897,29 +2231,18 @@ class Dungeon():
                     elif nd20 == 5 or nd20 == 6:
                         # Square, 40 × 40 ft.1
                         new_room = self.create_rectangle_room(40,40,1+ndoors)
-                    elif nd20 >= 7 and nd20 <= 8:
+                    elif nd20 >= 7 and nd20 <= 9:
                         #	Rectangle, 20 × 30 ft.1
                         new_room = self.create_rectangle_room(20,30,1+ndoors)
-                    elif nd20 == 9:
-                        new_room = self.create_rectangle_room(30,20,1+ndoors)
-                    elif nd20 >= 10 or nd20 <= 11:
+                    elif nd20 >= 10 or nd20 <= 12:
                         #	Rectangle, 30 × 40 ft.1
                         new_room = self.create_rectangle_room(30,40,1+ndoors)
-                    elif nd20 == 12:
-                        #	Rectangle, 30 × 40 ft.1
-                        new_room = self.create_rectangle_room(40,30,1+ndoors)
-                    elif nd20 == 13:
+                    elif nd20 == 13 or nd20 == 14:
                         #	Rectangle, 40 × 50 ft.2
                         new_room = self.create_rectangle_room(40,50,2+ndoors)
-                    elif nd20 == 14:
-                        #	Rectangle, 40 × 50 ft.2
-                        new_room = self.create_rectangle_room(50,40,2+ndoors)
                     elif nd20 == 15:
                         #	Rectangle, 50 × 80 ft.2
-                        if random.randint(1,2) == 1:
-                            new_room = self.create_rectangle_room(50,80,1+ndoors)
-                        else:
-                            new_room = self.create_rectangle_room(80,50,1+ndoors)
+                        new_room = self.create_rectangle_room(50,80,1+ndoors)
                     elif nd20 == 16:
                         #	Circle, 30 ft. diameter1
                         new_room = self.create_circle_room(30,1+ndoors)
@@ -1934,10 +2257,7 @@ class Dungeon():
                         new_room = self.create_circle_room(60,2+ndoors)
                     elif nd20 == 20:
                         #	Trapezoid, roughly 40 × 60 ft.2
-                        if random.randint(1,2) == 1:
-                            new_room = self.create_rectangle_room(40,60,1+ndoors)
-                        else:
-                            new_room = self.create_rectangle_room(60,40,1+ndoors)
+                        new_room = self.create_rectangle_room(40,60,1+ndoors)      
               
                 #### THIS IS A THING THAT NEEDS WORK ####
                 elif d20 == 19:
@@ -1964,7 +2284,7 @@ class Dungeon():
                     nlevel, check = self.check_level(1)
                 print('stair check',nd20, nlevel,check)
                 if check:
-                    mirror_room = Room()
+                    mirror_room = Room(self, stairs=new_room)
                     mirror_room.color = new_room.color
                     mirror_room.blocks = []
                     if self.expand(new_room):
@@ -1978,10 +2298,17 @@ class Dungeon():
                         room_added = self.parent.levels[nlevel].expand(mirror_room, stairway=True)
                         if room_added == False:
                             self.rooms.pop(new_room)
+                        else:
+                            new_room.stairs = mirror_room
+                            new_room.clear_room(True)
+                            new_room.stock_room()
             else:
                     room_added = self.expand(new_room)
             if tries > 10:
-                self.remove_door(self.get_free_doors()[0])
-                
-                
-            self.connect_free_doors(max_distance=2)
+                try:
+                    self.remove_door(self.get_free_doors()[0])
+                except IndexError:
+                    print('Free Doors', self.check_free_doors())
+                free_doors = self.check_free_doors()
+            self.connect_free_doors(max_distance=3)
+            

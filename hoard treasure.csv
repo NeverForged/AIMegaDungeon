@@ -1,0 +1,11 @@
+d100,CR 0-4 Hoard,CR 5-10 Hoard,CR 11-16 Hoard,CR 17+ Hoard
+01-06,6d6x100 cp; 3d6x100 sp,2d6x100 cp; 2d6x1000 sp; 2d6x100 gp,4d6x1000 sp; 6d6x1000 ep; 2d6x1000 gp,4d6x10000 gp; 1d6x1000 pp
+07-16,2d6 10gp gems,2d6 50gp gems,4d6 100gp gems,2d6 1000gp gems
+17-26,2d4 25gp art,2d4 250gp art,2d4 750gp art,2d4 2500gp art
+27-36,1d6 50gp gems,1d6 500gp gems,1d6 1000gp gems,1d6 5000gp art
+37-44,1d6 Magic Items (Table A),1d6 Magic Items (Table A/B),1d6 Magic Items (Table C/D),1d6 Magic Items (Table E)
+45-52,1d4 Magic Items (Table B),1d4 Magic Items (Table C),1d4 Magic Items (Table D),1d4 Magic Items (Table F)
+53-60,1 Magic Item (Table C),1 Magic Item (Table D),1 Magic Item (Table E),1 Magic Item (Table G)
+61-65,No Extra Treasure,1 Magic Item (Table E),1 Magic Item (Table F),1 Magic Item (Table H)
+66-70,No Extra Treasure,1 Magic Item (Table F),1 Magic Item (Table G),1 Magic Item (Table I)
+71-00,No Extra Treasure,No Extra Treasure,1 Magic Item (Table H),1 Magic Item (Table J)
