@@ -1,27 +1,39 @@
 import os
+import io
+import cv2
 import json
+import enum
+import heapq
 import shutil
 import pickle
 import base64
 import openai
+import random
 import requests
+import warnings
+import collections
+import numpy as np
 import pandas as pd
 import random as rand
+from PIL import Image
+from scipy import ndimage
+import matplotlib.image as img
 import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
+import matplotlib.path as mpath
+import matplotlib.patches as patches
+from matplotlib.patches import Polygon
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
-import enum
-import heapq
-import random
-import collections
+import requests
+import base64
 
 
-
+from IPython.display import display, Image as IPImage
 
 class AIMegaDungeon:
-    _slots_ = ('levels', 'level_info')
+    _slots_ = ('levels', 'game')
     
-    def __init__(self, filename=None, levelfile='levels.csv', keys='|'):
+    def __init__(self, filename=None, levelfile='levels.csv', keys='|', game='D&D 5E 2024'):
         '''
       
 
@@ -55,13 +67,24 @@ class AIMegaDungeon:
             
         self.char_level_ave = 1
 
- 
     ## ADMIN FUNCTIONS
     def file_path(self, filename):
         return os.path.join(self.current_dir, '{}'.format(filename))
         
+    def load(self, filename=None):
+            try:
+                with open(filename+'.aad', 'rb') as file:    
+                    self = pickle.load(file)
+            except:
+                return 0
+           
+    def save(self, filename='QuickSave'):
+        with open(filename+'.aad', 'wb') as file:
+            pickle.dump(self, file)  
+      
+    ## D&D TABLES
     def roll_table(self, df):
-        droll = rand.randint(1,max(df['Roll']))
+        droll = random.randint(1,max(df['Roll']))
         return df[df['Roll']==droll]['Result'].values[0]
         
     def get_treasure(self, CR, hoard=False):
@@ -131,41 +154,60 @@ class AIMegaDungeon:
                 ntlist.append(item)
             treasure = ' '.join(ntlist)
         return treasure
-        
-        
-    
-    """
-    def load(self, filename=None):
-            try:
-                with open(filename+'.aad', 'rb') as file:    
-                    dct = pickle.load(file)
-            except:
-                return 0
-            self.map = dct['map'] 
-            self.rooms = dct['rooms']
-            self.doors = dct['doors'] 
-            self.levels = dct['levels'] 
-            self.locations = dct['locations']
-            self.Current_Orientation, self.Current_Room, self.Current_Location = dct['vars']
-            print('{} Loaded Successfully')
-            return 1
-           
-    def save(self, filename='QuickSave'):
-        dct = {}
-        dct['map'] = self.map
-        dct['rooms'] = self.rooms
-        dct['doors'] = self.doors
-        dct['levels'] = self.levels
-        dct['vars'] = (self.Current_Orientation, self.Current_Room, self.Current_Location)
-        sct['locations'] = self.locations
-        with open(filename+'.aad', 'wb') as file:
-            pickle.dump(dct, file)  
-        
-    def roll(self, df):
-        droll = rand.randint(1,max(df['Roll']))
-        return df[df['Roll']==droll]['Result'].values[0]
-        
-    ### AI CALLS     
+ 
+    ## D&D FUNCTIONS
+    def make_description(self, room):
+        run_ai = False
+        if room.is_exit == True:
+            return 'This is an exit'
+        CR = 3+(2*abs(room.parent.info['level']))
+        room_desc_basic = 'Purpose: {}'.format(room.purpose)
+        room_desc_basic = room_desc_basic + '\n    State: {}'.format(room.state)
+        doors = []
+        for door in [door for door in room.doors if 'Secret' not in door.door_type]:
+            for border in door.borders:
+                if border.position.point() in [block.position.point() for block in room.blocks]:
+                    location = 'On the {} wall at {}'.format(direction_to_compass(border.direction),border.position.point())
+            if 'Portcullis' not in door.door_type:
+                doors.append('   - {} Door [{}]'.format(door.door_type, location))
+            else:
+                doors.append('{} [{}]'.format(door.door_type, location))
+        if len(doors) >= 1:
+            room_desc_basic = room_desc_basic + '\nDoors: \n{}'.format('\n'.join(doors))
+        if room.monster != '':
+            if '[Rolled]' not in room.monster:
+                prompt = 'Write a {} Encounter: Create a Medium CR {} encounter based around {}\n'.format(self.game, CR, room.monster)
+                prompt = prompt + '''   Be sure to include a basic outline of combat strategy, as if you were the author of 
+                                                           "The Monsters Know What They Are Doing", for the first 3 rounds of combat, including surrender 
+                                                            conditions/motivations
+                                                            Also inclue any note on roleplay for the creatures.\n'''
+                encounter = self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(self.game))
+                room_desc_basic = room_desc_basic + '\n\nEncounter: ' + self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(self.game))
+                room.monster = '[Rolled]' + room.monster
+            else:
+                oom_desc_basic = room_desc_basic + room.monster
+        if room.treasure != '':
+            if ('art' in room.treasure or 'Table' in room.treasure or 'gems' in room.treasure) and '[Rolled]' not in room.treasure :
+                prompt = 'Roll on the appropriate d&d 5e 2024 tables and write details (gem types and art description) for the following treasure: {}'.format(room.treasure)
+                treasure_rolls = self.get_chat_response(prompt, role='You are a talented Quest Writer for D&D 5e 2024')
+                room.treasure = '[Rolled] ' + treasure_rolls
+                room_desc_basic = room_desc_basic + '\nTreasure: ' + treasure_rolls
+            else: 
+                room_desc_basic = room_desc_basic + '\nTreasure: ' + room.treasure
+        if room.traps != '':
+            room_desc_basic = room_desc_basic + '\nTRAP: ' + room.traps
+        if room.hazards != '':
+            room_desc_basic = room_desc_basic + '\nHazard: {}'.format(room.hazards)
+        for furnishing in room.furnishings:
+            room_desc_basic = room_desc_basic + '\n{}'.format(furnishing)
+        room_desc_basic = room_desc_basic + '''
+Floors: {}
+Ceiling: {}
+Wall: {}
+                                            '''.format(room.parent.info['floors'],room.parent.info['ceilings'],room.parent.info['walls'])
+        return room_desc_basic   
+   
+    ## AI CALLS & TOOLS
     def get_chat_response(self, prompt, role="You are a helpful assistant.", model="gpt-3.5-turbo"):
         client = openai.OpenAI(api_key=self.OPENAI_API_KEY) # Create an OpenAI client instance
         response = client.chat.completions.create(
@@ -176,6 +218,410 @@ class AIMegaDungeon:
             ]
         )
         return response.choices[0].message.content
+         
+    def draw_room(self, room, show=True):
+        '''
+        Creates a mask and base image for AI to draw the room from
+        '''
+        
+        inner_radius = 0.25  #in case of stairs
+        Diagonals = make_diagonals(room)
+        fakeroom = make_fakeroom(room)
+        borders = list(room.geometry_borders())
+        wallborders = list(fakeroom.geometry_borders())
+        figsize, (xmin, xmax), (ymin, ymax) = get_figsize_from_wallborders(wallborders, dpi=70, pixels_per_unit=70, padding_units=0)
+        fig = plt.figure(figsize=figsize, dpi=70)
+        fig.set_facecolor('black')
+        plt.axes().set_aspect('equal', 'datalim')
+        plt.axis('off')
+        # mask the area white...
+        plt.fill(*zip(*make_contour(wallborders)), '#ffffff', alpha=1)
+        #plt.fill(*zip(*make_contour(borders)), '#ffffff')
+        #plt.fill(*zip(*make_contour(borders)), 'g', alpha=0.5)
+
+       
+        # draw the walls...
+        inner_wall_border_line = []
+        if 'stairwell' in room.purpose.lower() and 'down' in room.purpose.lower():
+            nborders = list(room.door_geometry_borders())
+            plt.fill(*zip(*make_contour(nborders)), '#ffffff')
+            for border in nborders:
+                inner_wall_border_line.append(plt.plot(*zip(*border), color='k', linewidth=2, alpha=1))
+        else:
+            for border in borders:
+                inner_wall_border_line.append(plt.plot(*zip(*border), color='k', linewidth=2, alpha=1))
+        for border in wallborders:
+             inner_wall_border_line.append(plt.plot(*zip(*border), color='k', linewidth=25, alpha=1.0))
+
+        
+        for coords in Diagonals:
+            x = [coord[0] for coord in coords]
+            y = [coord[1] for coord in coords]
+            inner_wall_border_line.append(plt.plot(x, y, color='k',linewidth=2, alpha=1.0))
+        if 'stairwell' in room.purpose.lower() and 'down' in room.purpose.lower():
+            ax = plt.gca()
+            x_lims = ax.get_xlim()
+            y_lims = ax.get_ylim()
+            inner_wall_border_line.append(ax.plot([x_lims[0], x_lims[1]], [y_lims[1], y_lims[0]], 
+                                            color='black', linewidth=2, zorder=10))
+            inner_wall_border_line.append(ax.plot([x_lims[0], x_lims[1]], [y_lims[0], y_lims[1]], 
+                                            color='black', linewidth=2, zorder=10))
+            
+                
+        # add gridlines
+        for border in room.grid_borders():
+            plt.plot(*zip(*border), color='k', linewidth=1, alpha=0.5)
+
+        # blue lines for doors
+        for i, door in enumerate(room.doors):
+            ddx, ddy = 0, 0 
+            if 'Portcullis' in door.door_type:
+                ddx, ddy = .2, .2
+            border = door.borders[door.rooms.index(room)]
+            x, y = border.position.point()
+            xlst, ylst = [], []
+            x_val, y_val = x, y
+            # lower corner, other lower corner, upper 1, upper 2, lower 1 again
+            frames = [0.25,0.75,.95,.05,0.25]
+            if border.direction == DIRECTION.LEFT: 
+                ylst = [y+frames[0]-ddy,y+frames[1]+ddy,y+frames[2]+ddy,y+frames[3]-ddy,y+frames[4]-ddy]
+                xlst = [x,x,x-0.5-ddx,x-0.5-ddx,x]
+            elif border.direction == DIRECTION.RIGHT:
+                ylst = [y+frames[0]-ddy,y+frames[1]+ddy,y+frames[2]+ddy,y+frames[3]-ddy,y+frames[4]-ddy]
+                xlst = [x+1,x+1,x+1.5+ddx,x+1.5+ddx,x+1]
+            elif border.direction == DIRECTION.UP:
+                xlst = [x+frames[0]-ddx,x+frames[1]+ddx,x+frames[2]+ddx,x+frames[3]-ddx,x+frames[4]-ddx]
+                ylst = [y+1,y+1,y+1.5+ddy,y+1.5+ddy,y+1]
+            elif border.direction == DIRECTION.DOWN:
+                xlst = [x+frames[0]-ddx,x+frames[1]+ddx,x+frames[2]+ddx,x+frames[3]-ddx,x+frames[4]-ddx]
+                ylst = [y,y,y-0.5-ddy,y-0.5-ddy,y]
+            if 'secret' not in door.door_type.lower():
+                plt.plot(xlst,ylst,color='k', linewidth=2, alpha=1)
+
+        # add central pillar for stairwell
+        if 'stairwell' in room.purpose.lower():
+            # Get the room center and bounds
+            ax = plt.gca()
+            xmin, xmax = ax.get_xlim()
+            ymin, ymax = ax.get_ylim()
+            center_x, center_y = (xmin + xmax) / 2, (ymin + ymax) / 2
+            # Add pillar to the mask...
+            pillar = plt.Circle((center_x, center_y), inner_radius, color='k', zorder=5)
+            ax.add_patch(pillar)
+            # blue lines for doors
+
+        # Save the MASK
+        plt.savefig(self.file_path('mask.png'), transparent=False, facecolor='white', bbox_inches=None, dpi=70) 
+
+        for line in inner_wall_border_line:
+            line[0].remove()
+            
+        # Color the room.png file...
+        plt.fill(*zip(*make_contour(wallborders)), 'b', alpha=1)
+        if 'stairwell' in room.purpose.lower() and 'down' in room.purpose.lower():
+            print('ding!')
+            nborders = list(room.door_geometry_borders())
+            plt.fill(*zip(*make_contour(nborders)), '#ffffff')
+        else:
+            plt.fill(*zip(*make_contour(borders)), '#ffffff') 
+        
+        # stairs (if applicable)
+        if 'stairwell' in room.purpose.lower():
+            if 'up' in room.purpose.lower():
+                plt.fill(*zip(*make_contour(borders)), '#909090')
+           # 1. Get the room center and bounds
+            ax = plt.gca()
+            xmin, xmax = ax.get_xlim()
+            ymin, ymax = ax.get_ylim()
+            center_x, center_y = (xmin + xmax) / 2, (ymin + ymax) / 2
+
+
+            # 3. CALCULATE START ANGLE (Based on door placement)
+
+            door = room.doors[0]
+            xx, yy = door.borders[door.rooms.index(room)].position.point()
+            direction = door.borders[door.rooms.index(room)].direction
+            dx = xx - center_x
+            dy = yy - center_y
+            print(yy, center_y)
+            start_angle = get_start_angle(room, direction, center_x, center_y, xx, yy)
+            if 'down' in room.purpose.lower():
+                    start_angle = -start_angle
+           
+            # 4. DRAW THE STAIRS
+            num_steps = 20
+            
+            for i in range(num_steps):
+                if 'up' in room.purpose.lower():
+                    delta = 1.2  - 0.5*i/num_steps
+                else:
+                    delta = 1.425 + 0.5*(i/num_steps)            
+                floor_coords = [(xmin+delta, ymin+delta), (xmax-delta, ymin+delta), (xmax-delta, ymax-delta), (xmin+delta, ymax-delta)]
+                floor_poly = Polygon(floor_coords, facecolor='none', edgecolor='none')
+                max_radius = (5 - delta) * 1.414 # 1.414 ensures it reaches the corners
+                ax.add_patch(floor_poly)
+                theta1 = start_angle + np.radians((i + 3) * (270 / num_steps))
+                theta2 = start_angle + np.radians((i + 4) * (270 / num_steps))
+
+                if 'down' in room.purpose.lower():
+                    theta1 = -theta1
+                    theta2 = -theta2
+                    
+                # Define the 4 points of a 'wedge'
+                p1 = (center_x + inner_radius * np.cos(theta1), center_y + inner_radius * np.sin(theta1))
+                p2 = (center_x + max_radius * np.cos(theta1), center_y + max_radius * np.sin(theta1))
+                p3 = (center_x + max_radius * np.cos(theta2), center_y + max_radius * np.sin(theta2))
+                p4 = (center_x + inner_radius * np.cos(theta2), center_y + inner_radius * np.sin(theta2))
+
+                # Use a wider range for UP: 0.2 (low) to 1.0 (high/white)
+                if 'up' in room.purpose.lower():
+                    val = 0.3 + (i / (num_steps - 1)) * 0.6
+                else:
+                    val = 0.7 - (i / (num_steps - 1)) * 0.6
+                step_color = (val, val, val) # This creates the RGB grayscale tuple
+                
+                step = Polygon(
+                    [p1, p2, p3, p4], 
+                    closed=True, 
+                    facecolor=step_color, 
+                    edgecolor=step_color, 
+                    linewidth=1, 
+                    zorder=4,
+                    alpha=1.0
+                )
+                if 'up' in room.purpose.lower():
+                    step_ = Polygon(
+                                [p1, p2, p3, p4], 
+                                closed=True, 
+                                facecolor='#ffffff', 
+                                edgecolor='w', 
+                                linewidth=1, 
+                                zorder=4,
+                                alpha=0.75
+                                )
+                    step_.set_clip_path(floor_poly)
+                    ax.add_patch(step_)
+                # Ensure it clips to the trapezoid walls
+                step.set_clip_path(floor_poly)
+                ax.add_patch(step)
+
+            # make bottom stair black...
+            if 'down' in room.purpose.lower():
+                step = Polygon(
+                    [p1, p2, p3, p4], 
+                    closed=True, 
+                    facecolor='k', 
+                    edgecolor='k', 
+                    linewidth=1, 
+                    zorder=4,
+                    alpha=1.0
+                    )
+                step.set_clip_path(floor_poly)
+                ax.add_patch(step)
+            # 5. DRAW THE PILLAR (To cover the center point)
+            pillar = plt.Circle((center_x, center_y), inner_radius, color='k', zorder=5)
+            ax.add_patch(pillar)
+            # blue lines for doors
+        
+        for i, door in enumerate(room.doors):
+            ddx, ddy = 0, 0 
+            if 'Portcullis' in door.door_type:
+                ddx, ddy = .2, .2
+            border = door.borders[door.rooms.index(room)]
+            x, y = border.position.point()
+            xlst, ylst = [], []
+            # lower corner, other lower corner, upper 1, upper 2, lower 1 again
+            frames = [0.25,0.75,.95,.05,0.25]
+            if border.direction == DIRECTION.LEFT: 
+                ylst = [y+frames[0]-ddy,y+frames[1]+ddy,y+frames[2]+ddy,y+frames[3]-ddy,y+frames[4]-ddy]
+                xlst = [x,x,x-0.5-ddx,x-0.5-ddx,x]
+            elif border.direction == DIRECTION.RIGHT:
+                ylst = [y+frames[0]-ddy,y+frames[1]+ddy,y+frames[2]+ddy,y+frames[3]-ddy,y+frames[4]-ddy]
+                xlst = [x+1,x+1,x+1.5+ddx,x+1.5+ddx,x+1]
+
+            elif border.direction == DIRECTION.UP:
+                xlst = [x+frames[0]-ddx,x+frames[1]+ddx,x+frames[2]+ddx,x+frames[3]-ddx,x+frames[4]-ddx]
+                ylst = [y+1,y+1,y+1.5+ddy,y+1.5+ddy,y+1]
+            elif border.direction == DIRECTION.DOWN:
+                xlst = [x+frames[0]-ddx,x+frames[1]+ddx,x+frames[2]+ddx,x+frames[3]-ddx,x+frames[4]-ddx]
+                ylst = [y,y,y-0.5-ddy,y-0.5-ddy,y]
+     
+            if 'secret' not in door.door_type.lower():
+                curr_xlim = plt.gca().get_xlim()
+                curr_ylim = plt.gca().get_ylim()
+                plt.text(sum(xlst)/len(xlst), sum(ylst)/len(ylst)-0.5+(i*.2), door.door_type.split(' ')[0] + ' Door', ha='center', color='#FF0000', zorder=21)
+                plt.fill(xlst, ylst, color='saddlebrown', alpha=1.0, zorder=20)
+                plt.gca().set_xlim(curr_xlim)
+                plt.gca().set_ylim(curr_ylim)
+            else:
+                print('SECRET DOOR!')
+         
+
+        plt.savefig(self.file_path("room.png".format(room.room_id, room.parent.info['level'])), dpi=300, bbox_inches='tight')
+        if show == True:
+            plt.show()
+    
+    def render_room(self, room, show=True):
+        '''
+        creates a prompt and sensds it to make the AI render the room.
+        '''
+        # CONFIG
+        api_key = str(self.OPENROUTER_API_KEY).strip()
+        input_image_path = self.file_path("room.png")
+        mask_image_path = self.file_path("mask.png")  # your mask
+        output_image_path = self.file_path("Rooms/{} Level {} Room {}.png".format(self.filename,
+                                                                                  room.parent.info['level'],
+                                                                                  room.room_id))
+        def to_data_uri(path):
+            with open(path, "rb") as f:
+                data = f.read()
+            b64 = base64.b64encode(data).decode("utf-8")
+            ext = path.split(".")[-1]
+            return f"data:image/{ext};base64,{b64}"
+        
+        img_data_uri = to_data_uri(input_image_path)
+        mask_data_uri = to_data_uri(mask_image_path)
+        
+        # PROMPT
+        furnishing_list = '; '.join([a.split(': ')[1] for a in room.furnishings if any(k in a.lower() for k in ['general', 'mage', 'temple'])])
+        
+        newline = ''
+        ld, rd, ud, dd = False, False, False, False
+        lt, rt, ut, dt = '','','',''
+        for i, door in enumerate(room.doors):
+            border = door.borders[door.rooms.index(room)]
+            if border.direction == DIRECTION.LEFT: 
+                if 'secret' not in door.door_type.lower():
+                    ld = True
+                    lt = door.door_type
+            elif border.direction == DIRECTION.RIGHT:
+                if 'secret' not in door.door_type.lower():
+                    rd = True
+                    rt = door.door_type
+            elif border.direction == DIRECTION.UP:
+                print(door.door_type)
+                if 'secret' not in door.door_type.lower():
+                    ud = True
+                    ut = door.door_type
+            elif border.direction == DIRECTION.DOWN:
+                if 'secret' not in door.door_type.lower():
+                    dd = True
+                    dt = door.door_type
+        
+        newline = ''
+        for tup in [(ud, 'NORTHERN', ut), (dd, 'SOUTHERN', dt), (ld, 'WESTERN', lt), (rd, 'EASTERN', rt)]:
+            if tup[0] == False:
+                newline = newline + '    THE {} WALL IS SOLID. THERE ARE NO DOORS/WINDOWS/OPENINGS IN THE {} WALL.  The AI must strictly ignore any instinct to add "balance" or "symmetry" to the room. The {} boundary is a dead-end.\n'.format(tup[1], tup[1], tup[1])
+
+        floorline =  '''    FLOORS: The black grid is strictly for the horizontal floor. Do not project or continue any grid lines into the blue trapezoids. The floor texture and grid must stop abruptly—with zero transition—at the inner black line. If a grid line hits the black boundary, it must disappear instantly.
+                            Floor is only in the gridded section, and must not creep into the wall area (no floor in in the blue trapezoids from room.png).\n"
+                        '''
+
+        if 'stairwell' in room.purpose.lower() and 'down' in room.purpose.lower():   
+            floorline = '''    ARCHITECTURE:  This is a stairwell, there is no bottom, just stairs all the way down. There is only 1 set of walls, 4 walls forming a square shaft
+                                THIS IS A SIMPLE SQUARE STAIRWELL.  PROHIBIT AI FROM OVERTHINKING IT
+        LANDING: THE LANDING (WHITE SQUARE in room.png)  has a sharp 90-DEGREE VERTICAL DROP. Prohibit any transitional floor. 
+                                - the landing is only the 5ft square landing in the corner of the shaft
+                                - The stair width must fill 100% of the horizontal space between the central pillar and the outer walls.
+                                - The landing is in one corner of the room, there are two sides where it is bound by the walls
+                                - If there are any Landing pixels outside the white square in room.png, the render is a failure\n '''
+
+        prompt = (
+            f"IMAGE EDITING TASK: Cinematic Schematic Render.\n\n"
+            f"STRICT MASK RULE: Use MASK.png as a physical stencil. \n"
+            f"SAFETY OVERRIDE: The black pixels in MASK.png are a hard boundary." # If a pixel is black in the mask, do not render any light, shadow, or texture there. Keep it pure black."
+            f"    The thick black lines are the 'clipping edge.' If a pixel is outside that central area, it MUST be the vertical wall material, never the floor material."
+            #f"- BLACK pixels in MASK.png are FROZEN. Do not change them.\n"
+            # f"- WHITE pixels in MASK.png are the ONLY editable zones. \n\n"
+            f"1. ARCHITECTURE: The blue trapezoids are VERTICAL WALLS that act as a 3D cookie-cutter. They physically overlap and HIDE the floor. There is no grid on the walls. The floor does not 'meet' the wall; it is simply cut off by the wall. Do not render any bevel, shadow-line, or ledge where the floor hits the blue area\n."
+            f"    ARCHITECTURE: The BLUE trapezoids represent SOLID, IMPENETRABLE WALLS. If a wall does not have a brown door polygon, it is a single, continuous, and unbroken wall.\n"
+            #f"2. MOOD & STYLE: {room.purpose} ({room.state})  Use Even neutral lighting (No directional shadows separating objects) and realistic textures.\n"
+            f"2. MOOD & STYLE: {room.purpose} ({room.state})  Use cinematic lighting and realistic textures.\n"
+            f"{floorline}"
+            f"        Texture: {room.parent.info['floors']}."  
+            f"         -Treat the black boundary line as a physical barrier. THIS Texture must be 'clipped' by the wall mask. Do not anti-alias or blend this area into the wall.\n"
+            f"    WALLS (BLUE in ROOM.png): Vertical inner wall faces\n"
+            f"        Texture: {room.parent.info['walls']}. Thicker black line is top of wall.\n"
+            f"        These are physically separate from the floor. Even if the textures are identical, the wall grain must be vertical and the floor grain must be horizontal. The wall texture MUST NOT touch the floor grid."
+            f"    Walls should start at the black line around the gridded section.\n"
+            f"3. DOOR ANCHORS: ONLY render doors where you see a BROWN POLYGON and a RED LABEL. If an area is BLUE, it is a SOLID WALL\n"
+            f"    Render a closed medieval door made of the labeled material exactly inside those gaps. If a wall is solid black in the mask, it is a PERMANENT wall.\n"
+            f"    The Brown trapezoids are gaps in the walls filled with a door.  Doors must be INSIDE the walls like real doors\n"
+            f"    Remove the red labels\n"
+            f"{newline}"
+            f"    Do not add 'cinematic' door frames or gaps where they are not drawn in room.png."
+            f"4. DETAILS: {furnishing_list} \n"
+            f"   - MANDATORY SIZE: Scale items accordingly to one grid square being 5ft.\n"
+            f"   - VIEW: Strict 90-degree TOP-DOWN. Objects must look like flat floor-details, not 3D models.\n"
+            f"5. NO EXTRA OPENINGS: The layout is a closed system.\nNo extra gridlines.  Do not make up your own gridlines.\n"
+            f"   NO DOORS ON THE FLOOR, NOTHING OUTSIDE THE WALLS, NO EXTRA DOORS THAT ARE NOT IN THE MASK\n"
+            f"   USE REALISTIC TEXTURES\n"
+            f" DO NOT DRAW BLACK LINES FROM mask.png on the final image, especially wall corner lines\n"
+            f"      only lines from room.png are to be reprooduced on final image\n"
+            f"OUTPUT: ONLY the base64 data URI. No text."
+        )
+        
+
+        # API REQUEST
+        payload = {
+            "model": "google/gemini-2.5-flash-image",  # use a multimodal Vision model
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": img_data_uri}},
+                        {"type": "image_url", "image_url": {"url": mask_data_uri}},
+                    ],
+                }
+            ],
+        }
+        
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        
+
+        # PROCESS OUTPUT
+        if response.status_code == 200:
+            res = response.json()
+            msg = res["choices"][0]["message"]
+        
+            # Find base64 image in the response
+            img_url = None
+            if "images" in msg and len(msg["images"]) > 0:
+                img_url = msg["images"][0].get("image_url", {}).get("url")
+        
+            # If not in images, maybe in content
+            if not img_url:
+                content = msg.get("content", "")
+                if "base64," in content:
+                    img_url = content.split("base64,")[-1]
+        
+            if img_url:
+                raw_b64 = img_url.split("base64,")[-1]
+                with open(output_image_path, "wb") as f:
+                    f.write(base64.b64decode(raw_b64))
+                print("✅ Saved edited image:", output_image_path)
+                if show == True:
+                    display(IPImage(filename=output_image_path))
+            else:
+                print("⚠️ No image returned — model may have replied with text only.")
+        else:
+            print("❌ API Error", response.status_code, response.text)
+    
+    """
+   
+        
+  
+        
+    d
             
     def build_battlemap_prompt(self,
         canvas_w,
@@ -753,7 +1199,7 @@ class AIMegaDungeon:
         contents = []
         for key in self.AppendixA['Dungeon Dressings'].keys():
             if key != 'General Furnishings and Appointments' and key != 'Specific':
-                for i in range(len(locations)+rand.randint(1,3)):
+                for i in range(len(locations)+random.randint(1,3)):
                     thing =  self.roll(self.AppendixA['Dungeon Dressings'][key])
                 contents.append(key + ': ' + thing)
             elif key == 'Specific' and room != 'Passage':
@@ -761,7 +1207,7 @@ class AIMegaDungeon:
                 for kkey in self.AppendixA['Dungeon Dressings']['Specific'].keys():
                     for word in kkey.split(' '):
                         if room_purpose.find(word.lower()) > -1:
-                            for i in range(len(locations)+rand.randint(1,3)):
+                            for i in range(len(locations)+random.randint(1,3)):
                                 things.append(self.roll(self.AppendixA['Dungeon Dressings']['Specific'][kkey]))
                 contents.append('Specific Furnishings:' + ', '.join(things))
             else:
@@ -956,13 +1402,6 @@ class AIMegaDungeon:
  """   
     
     
-    
-    
-
-
-
-
-
 ##############
 # Enumerations
 ##############
@@ -1080,6 +1519,182 @@ def direction_to_compass(direction):
     else:
         return direction
     
+def make_contour(segments):
+
+    segments = list(segments)
+
+    line = list(segments.pop())
+
+    while True:
+
+        end_point = line[-1]
+
+        for segment in segments:
+            if end_point == segment[0]:
+                line.append(segment[1])
+                segments.remove(segment)
+                break
+        else:
+            break
+
+    return line
+
+def make_diagonal_wall_border(borders):
+    x,y = borders[0].position.point()
+    dx,dy = 0,0
+    ddx, ddy = 0, 0
+    for border in borders:
+        if border.direction == DIRECTION.LEFT: 
+            dx = dx-1
+        elif border.direction == DIRECTION.RIGHT:
+            dx = dx+1
+            ddx = 1
+        elif border.direction == DIRECTION.UP:
+            dy = dy+1
+            ddy = 1
+        elif border.direction == DIRECTION.DOWN:
+            dy = dy-1
+    return [(x+ddx,y+ddy),(x+dx+ddx,y+dy+ddy)]
+
+def make_fakeroom(room):
+    new_borders = []
+    for block in room.blocks:
+        new_borders.append(block.position.point())
+        a = [border for border in block.borders.values() if border.internal == False]
+        if len(a) > 0:
+            x, y = block.position.point()
+            changes = [[0,0] for border in a]
+            for i, border in enumerate(a):
+                if border.direction == DIRECTION.LEFT: 
+                    changes[i][0] = -1
+                elif border.direction == DIRECTION.RIGHT:
+                    changes[i][0] = 1
+                elif border.direction == DIRECTION.UP:
+                    changes[i][1] = 1
+                elif border.direction == DIRECTION.DOWN:
+                    changes[i][1] = -1
+            actual_changes = []
+            for i, change in enumerate(changes):
+                actual_changes.append(tuple(change))
+                for ochange in changes[i+1:]:
+                    actual_changes.append((change[0]+ochange[0],change[1]+ochange[1]))
+            changes = list(set(actual_changes))
+            [new_borders.append((x+a[0],y+a[1])) for a in changes]
+    new_borders = list(set(new_borders))
+    # make a fakeroom to set the borders...
+    fakeroom = Room(parent=room.parent, is_exit=True)
+    fakeroom.blocks = []
+    for point in new_borders:
+        new_block = Block(Position(point[0], point[1]))
+        for block in fakeroom.blocks:
+                block.sync_borders_with(new_block)
+        fakeroom.blocks.append(new_block) 
+    return fakeroom
+
+def perpendicular(a, b):
+    horizontal = {DIRECTION.LEFT, DIRECTION.RIGHT}
+    vertical   = {DIRECTION.UP, DIRECTION.DOWN}
+    return ((a.direction in horizontal and b.direction in vertical) or
+            (a.direction in vertical and b.direction in horizontal))
+
+def make_diagonals(room):
+    diagonals = []
+
+    for block in room.blocks:
+        borders = [b for b in block.borders.values() if not b.internal]
+
+        # Check ALL pairs
+        for i in range(len(borders)):
+            for j in range(i + 1, len(borders)):
+                a = borders[i]
+                b = borders[j]
+
+                if perpendicular(a, b):
+                    diagonals.append(
+                        make_diagonal_wall_border([a, b])
+                    )
+
+    return diagonals    
+ 
+def get_figsize_from_wallborders(wallborders, dpi=100, pixels_per_unit=80, padding_units=1):
+    """
+    Calculate matplotlib figsize from wallborders coordinates.
+    
+    Args:
+        wallborders:     List of line segments defining the outer walls
+        dpi:             DPI for the figure
+        pixels_per_unit: How many pixels per grid unit
+        padding_units:   Extra units of black border around the room (the "mask" area)
+    
+    Returns:
+        figsize: (width, height) in inches for plt.figure()
+        xlim:    (xmin, xmax) for plt.xlim()
+        ylim:    (ymin, ymax) for plt.ylim()
+    """
+    # Flatten all points from all segments
+    all_points = [pt for segment in wallborders for pt in segment]
+    xs = [p[0] for p in all_points]
+    ys = [p[1] for p in all_points]
+
+    xmin, xmax = min(xs), max(xs)
+    ymin, ymax = min(ys), max(ys)
+
+    # Add padding for the black border around the room
+    xmin -= padding_units
+    xmax += padding_units
+    ymin -= padding_units
+    ymax += padding_units
+
+    x_units = xmax - xmin
+    y_units = ymax - ymin
+
+    width_px  = x_units * pixels_per_unit
+    height_px = y_units * pixels_per_unit
+
+    figsize = (width_px / dpi, height_px / dpi)
+
+    return figsize, (xmin, xmax), (ymin, ymax)
+
+def get_start_angle(room, direction, center_x, center_y, xx, yy):
+    # Calculate door position relative to your specific center
+    dx = xx - center_x
+    dy = yy - center_y
+    
+    # We use the signs of dx and dy to find the visual quadrant.
+    # If the output is 180 off, we swap the logic to match the plot's Y-inversion.
+    
+    if direction == DIRECTION.LEFT:
+        # Southern Block on West wall
+        # If dy < 0 is visually 'South' in your plot:
+        angle = 225 if dy < 0 else 135
+        
+    elif direction == DIRECTION.RIGHT:
+        # Southern Block on East wall
+        angle = 315 if dy < 0 else 45
+        
+    elif direction == DIRECTION.UP:
+        # North wall: check relative left/right (dx)
+        angle = 135 if dx < 0 else 45
+        
+    elif direction == DIRECTION.DOWN:
+        # South wall: check relative left/right (dx)
+        angle = 225 if dx < 0 else 315
+    else:
+        angle = 0.0
+
+    return np.deg2rad(angle)
+
+def border_wall(border):
+    x,y = border.position.point()
+    if border.direction == DIRECTION.LEFT: 
+        return [[(x-1,y+(i-1)), (x-1, y+i)] for i in range(3)]
+    elif border.direction == DIRECTION.RIGHT:
+        return [[(x+2,y+(i-1)), (x+2, y+i)] for i in range(3)]
+    elif border.direction == DIRECTION.UP:
+        return [[(x+(i-1),y+2), (x+i, y+2)] for i in range(3)]
+    elif border.direction == DIRECTION.DOWN:
+        return [[(x+(i-1),y-1), (x+i, y-1)] for i in range(3)]    
+
 ##############
 # Core classes
 ##############
@@ -1409,6 +2024,20 @@ class Room():
             borders.extend(block.geometry_borders())
 
         return borders
+    
+    def door_geometry_borders(self):
+        '''
+        gives outer borders of any square with a door on it
+        '''
+        borders = []
+        
+
+        block_positions = [door.borders[door.rooms.index(self)].position.point() for door in self.doors]
+        for block_position in [door.borders[door.rooms.index(self)].position.point() for door in self.doors]:
+            for block in [block for block in self.blocks if block.position.point() == block_position]:
+                borders.extend([a.geometry_borders() for a in block.borders.values()])
+
+        return borders
         
     def wall_geometry_borders(self):
         '''
@@ -1420,8 +2049,7 @@ class Room():
             borders.extend(block.wall_geometry_borders())
 
         return borders
-        
-        
+              
     def grid_borders(self):
         '''
         gives inner borders of the blocks in the room so a grid may be drawn
@@ -1506,7 +2134,7 @@ class Room():
             if border.can_has_door:
                 yield border
 
-    def place_doors(self, number, trapped=False):
+    def place_doors(self, number, trapped=False, t_pass=False):
         borders = [border
                            for border in self.borders()
                            if not border.internal]
@@ -1550,42 +2178,48 @@ class Room():
         check_xy = max(min_x_num, max_x_num, min_y_num, min_x_num) + 1
         
         # add extreme borders to list for more liklyhood of choice
-        temp = [border
-                           for border in self.borders()
-                           if not border.internal]
+        temp = [border for border in self.borders() if not border.internal]
+        if t_pass:
+            temp = []
+            
         for border in borders:
             x, y = border.position.point()
 
             if x == max_x:
                 [temp.append(border) for _ in range(check_xy-max_x_num)]
+                if t_pass:
+                    [temp.append(border) for _ in range(check_xy)]
             elif x == min_x:
                 [temp.append(border) for _ in range(check_xy-min_x_num)]
-            elif x >= mid_x-1 and x <= mid_x + 1 and y <= max_y-1 and y >= min_y+1:
-                [temp.append(border) for _ in range(int(check_xy))]
+                if t_pass:
+                    [temp.append(border) for _ in range(check_xy)]
             
             if y == max_y:
                 [temp.append(border) for _ in range(check_xy-max_y_num)]
+                # t-passage ends should have it...
+                if t_pass:
+                    [temp.append(border) for _ in range(check_xy)]
             elif y == min_y:
                 [temp.append(border) for _ in range(check_xy-min_y_num)]
+                if t_pass:
+                    [temp.append(border) for _ in range(check_xy)]
             
-            elif y >= mid_y - 1 and y >= mid_y+1 and x <= max_x-1 and x >= min_x+1:
+            if not t_pass: # middle sections
+                if x >= mid_x-1 and x <= mid_x + 1 and y <= max_y-1 and y >= min_y+1:
+                    [temp.append(border) for _ in range(int(check_xy))]
+                if y >= mid_y - 1 and y >= mid_y+1 and x <= max_x-1 and x >= min_x+1:
+                    [temp.append(border) for _ in range(int(check_xy))]
+
+            # lets try to make sure the dungeon centers...   
+            if get_distance((0,0), (x,y)) >= min_distance_to_center+1 and not t_pass:
                 [temp.append(border) for _ in range(int(check_xy))]
 
-        
-        if borders == []:
-            borders = [border
-                           for border in self.borders()
-                           if not border.internal]
-                          
-        
-        # make areas closest to the center more likely...
-        
-        
+
         neighbors = set()
         directions = set()
         attempts = 0
 
-        while len(self.doors) < number and attempts < len(borders):
+        while len(self.doors) < number and attempts <= len(borders):
             border = random.sample(borders, 1)[0]
             check_position = border.position
             check_direction = border.direction
@@ -1593,7 +2227,7 @@ class Room():
             
             if check_position in neighbors:  #borders an existing door
                 okay = False
-            elif len(list(directions)) < 4 and check_direction in directions:  #same wall...
+            elif len(list(directions)) < 4 and check_direction in directions and not t_pass:  #same wall...
                 okay = False
             if okay == True:
                 neighbors.add(check_position)
@@ -1650,11 +2284,11 @@ class Room():
         if direction == 4:
             y = -1
         
-        print('tpassage')
+        t_len = 2*random.randint(2,6)
         start = self.blocks[0].position.point()
         for i in range(random.randint(9,12)):
-            for j in range(8):
-                if i <= 1 or j == 3 or j == 4:
+            for j in range(t_len):
+                if i <= 1 or j == int(t_len/2) or j == int(t_len/2)-1:
                     if direction < 2:
                         new_position = Position(start[0]+(i*x),start[1]+(j*y))
                     else:    
@@ -1689,7 +2323,6 @@ class Room():
             try:
                 self.purpose = self.parent.parent.roll_table(self.parent.parent.AppendixA['Purpose'][self.parent.info['purpose']])
             except KeyError:
-                print('Dungeon Purpose Broken')
                 self.purpose = self.parent.parent.roll_table(self.parent.parent.AppendixA['Purpose']['General Dungeon Chambers'])
         self.state = self.parent.parent.roll_table(self.parent.parent.AppendixA['Current_Chamber_State'])
 
@@ -1803,7 +2436,7 @@ class Dungeon():
         self.parent = parent
         self.level = self.info['level']
 
-    def create_room(self, blocks, doors, trap=False, is_exit=True):
+    def create_room(self, blocks, doors, trap=False, is_exit=False):
         room = Room(self, is_exit=is_exit)
 
         for i in range(blocks):
@@ -1836,7 +2469,7 @@ class Dungeon():
 
         room.make_tpassage()
 
-        room.place_doors(doors)
+        room.place_doors(doors, t_pass=True)
         
         return room
        
@@ -1845,7 +2478,35 @@ class Dungeon():
             for border in room.door_borders():
                 if not border.used:
                     yield border
-                    
+  
+    def draw_dungeon(self,show=True):
+        plt.axes().set_aspect('equal', 'datalim')
+        
+        fig = plt.figure(1)
+        
+        for room in self.rooms:
+            borders = list(room.geometry_borders())
+            plt.fill(*zip(*make_contour(borders)), '#ffffff')
+            plt.fill(*zip(*make_contour(borders)), room.color, alpha=0.25)
+        
+            for border in borders:
+                plt.plot(*zip(*border), color=room.color, linewidth=3, alpha=1.0)
+        
+            for border in room.grid_borders():
+                plt.plot(*zip(*border), color=room.color, linewidth=1, alpha=0.5)
+        
+        for room in self.rooms:
+            for door_border in room.door_borders():
+                plt.plot(*zip(*door_border.geometry_borders()), color='b', linewidth=6, alpha=0.75)
+            
+
+        for corridor in self.corridors:
+            plt.plot(*zip(*corridor.geometry_segments()), color='#000000', linewidth=1, alpha=1)
+
+        plt.savefig(self.parent.file_path("Maps/{} level {}.png".format(self.parent.filename, self.info['level'])), dpi=300, bbox_inches='tight')
+        if show == True:
+            plt.show()
+        
     def is_intersect_room(self, room):
         return any(current_room.is_intersect(room) for current_room in self.rooms)
 
@@ -1855,15 +2516,13 @@ class Dungeon():
 
 
         for max_distance in range(0, max_intersection_radius):
-            print(max_distance)
             #for dungeon_door in self.door_borders():
             for i, dungeon_door_object in enumerate(self.get_free_doors()):            
                 dungeon_door = dungeon_door_object.borders[0]
                 max_distance, dungeon_door, new_room_door, x, y = self.room_position_from_door(max_distance, new_room, dungeon_positions, dungeon_door)
                 if max_distance != -1:
-                    print('Good')
-                    print(max_distance, dungeon_door, new_room_door, x, y)
                     yield (max_distance, dungeon_door, new_room_door, x, y)
+        
         
     def room_position_from_door(self, max_intersection_radius, new_room, dungeon_positions, dungeon_door):
         '''
@@ -1884,7 +2543,6 @@ class Dungeon():
                     check_position = new_room_door.position.point()[0] == dungeon_door.position.point()[0] or new_room_door.position.point()[1] == dungeon_door.position.point()[1]
                    
                     if dungeon_door.is_mirrored(new_room_door) and check_position and not self.check_blocks(new_room):
-                        print(dungeon_door.direction, new_room_door.direction, 'DING')
                         return (max_intersection_radius, dungeon_door, new_room_door, x, y)
                         
         return (-1, None, None, None, None)
@@ -1924,60 +2582,43 @@ class Dungeon():
             # ATTENTION: method room_positions_bruteforce make modifications of new_room
             #            it is not very good decission
             
-            door = self.get_free_doors()[0]  #radiate out from oldest doors
-            dungeon_door = door.borders[0]
-            max_distance, dungeon_door, new_room_door, x, y = self.room_position_from_door(max_intersection_radius,
-                                                                                                  new_room,
-                                                                                                  dungeon_positions,
-                                                                                                  dungeon_door)
-            try:                                                                                      
-                dungeon_door_out_position = dungeon_door.mirror().position
-                new_room_door_out_position = new_room_door.mirror().position
+            for door in self.get_free_doors():
+                dungeon_door = door.borders[0]
+                max_distance, dungeon_door, new_room_door, x, y = self.room_position_from_door(max_intersection_radius,
+                                                                                                      new_room,
+                                                                                                      dungeon_positions,
+                                                                                                      dungeon_door)
+                if dungeon_door is not None:                                                                            
+                    dungeon_door_out_position = dungeon_door.mirror().position
+                    new_room_door_out_position = new_room_door.mirror().position
 
-                filled_positions = dungeon_positions | new_room.block_positions()
-            except AttributeError:
-                return False
-                
-            try:
-                path_length, corridor_path = find_path(dungeon_door_out_position,
-                                                       new_room_door_out_position,
-                                                       filled_cells=filled_positions,
-                                                       max_path_length=max_distance)
-            except IndexError:
-                return False
+                    filled_positions = dungeon_positions | new_room.block_positions()
 
-            if path_length is None:
-                return False
+                    path_length, corridor_path = find_path(dungeon_door_out_position,
+                                                           new_room_door_out_position,
+                                                           filled_cells=filled_positions,
+                                                           max_path_length=max_distance)
 
-            # door is free and the positions are opposed      
-            try:
-                if len(dungeon_door.door.borders) < 2 and dungeon_door.is_mirrored(new_room_door) and len(new_room_door.door.borders) < 2:
-                    # we're good...
-                    door = dungeon_door.door
-                    new_room.doors.pop(new_room.doors.index(new_room_door.door))
-                    door.borders.append(new_room_door)
-                    self.rooms.append(new_room)
-                    new_room.doors.append(door)
+                    if path_length is None:
+                        return False
 
-                    new_corridor = Corridor(dungeon_door, new_room_door, corridor_path)
+                    # door is free and the positions are opposed      
+                   
+                    if len(dungeon_door.door.borders) < 2 and dungeon_door.is_mirrored(new_room_door) and len(new_room_door.door.borders) < 2:
+                        # we're good...
+                        door = dungeon_door.door
+                        new_room.doors.pop(new_room.doors.index(new_room_door.door))
+                        door.borders.append(new_room_door)
+                        door.rooms.append(new_room)
+                        self.rooms.append(new_room)
+                        new_room.doors.append(door)
 
-                    self.corridors.append(new_corridor)
-                    
-                    return True
-                else:
-                    return False
-            except:
-                if dungeon_door != None:
-                    self.remove_door(dungeon_door)
-                try:
-                    del new_room_door
-                except:
-                    print()
-                try:
-                    del new_room
-                except:
-                    print()
-                return False
+                        new_corridor = Corridor(dungeon_door, new_room_door, corridor_path)
+
+                        self.corridors.append(new_corridor)
+                        
+                        return True
+           
         return False
        
     def starting_room(self):
@@ -2022,7 +2663,6 @@ class Dungeon():
         check = False
         while check == False:
             check = self.expand(self.create_room(0,1,is_exit=True))
-            print('starting room exit',check)
                   
     def check_level(self, new):
         '''
@@ -2050,7 +2690,10 @@ class Dungeon():
             for door in room.doors:
                 if len(door.borders) == 1:
                     doors.append(door)
-        return list(set(doors))
+        ret_doors = []
+        # a set changes the order...
+        [ret_doors.append(door) for door in doors if door not in ret_doors]
+        return ret_doors
     
     def remove_door(self, door):
         for border in door.borders:
@@ -2188,8 +2831,7 @@ class Dungeon():
                 connections.append((room_a, room_b, dungeon_door))
 
         return connections
-        
-        
+               
     def add_area(self):
         '''
         Rolls on some tables from the DMG
@@ -2198,20 +2840,15 @@ class Dungeon():
         room_added = False
         free_doors = self.check_free_doors()
         tries = 0
-        while free_doors >= 1 and room_added == False:
-            tries += 1
-            free_doors = self.check_free_doors()
-            if tries > 10:
-                print(tries, free_doors, room_added)
-            exit_chance = 95-self.info['level'] - int(len(self.rooms)/10)
-            if exit_chance > 100:
-                exit_chance = 100
+        if free_doors >= 1:
+            # 1% for every 10 rooms - 3% for every exit...  
+            exit_chance = 100 - int(len(self.rooms)/10) + 3*sum([room.is_exit for room in self.rooms])
             if random.randint(1,100) >= exit_chance:
                 ## EXIT
                 new_room = self.create_room(0,1,is_exit=True)
             else:
                 d20 = random.randint(1,20)
-                print('d20', d20)
+                print(d20)
                 if d20 <= 2:
                     # Passage extending 10 ft., then T intersection extending 10 ft. to the right and left
                     new_room = self.create_tpassage(3)
@@ -2269,46 +2906,111 @@ class Dungeon():
                     new_room = self.create_room(0,1,trap=True)
                     
             #last bit...
-            if stairs:
+            
+            if not stairs:
+                room_added = self.expand(new_room)
+            else:
+                stairs = True
+            if stairs == True:
+                print('1 we have stairs')
                 # stair code...
                 new_levels = []
                 room_added = False
                 new_room = self.create_rectangle_room(10,10,1)
                 nd20 = random.randint(1,20)
-
+                print('2 we have stairs')
+                up = True
                 if nd20 <= 12 or nd20 == 16 or nd20 == 18:
                     # Down one level to a chamber
                     nlevel, check = self.check_level(-1)
+                    up = False
                 elif nd20 >= 13 and nd20 <= 15 or nd20 == 17 or nd20 >= 19:
                     #	Up one level to a chamber
                     nlevel, check = self.check_level(1)
-                print('stair check',nd20, nlevel,check)
+                print('3 we have stairs', nlevel, check)
                 if check:
                     mirror_room = Room(self, stairs=new_room)
-                    mirror_room.color = new_room.color
                     mirror_room.blocks = []
-                    if self.expand(new_room):
+                    check = self.expand(new_room)
+                    print('4 we have stairs', check)
+                    if check == True:
+                        # add the blocks
                         for block in new_room.blocks:
                             x, y = block.position.point()
-                            new_block = Block(Position(x, y))
+                            new_block = Block(Position(x, y)) 
                             for nblock in mirror_room.blocks:
                                 nblock.sync_borders_with(new_block)
                             mirror_room.blocks.append(new_block)
+                            mirror_room.color = new_room.color
+                        if up:
+                            up_down = [new_room, mirror_room]
+                        else:
+                            up_down = [mirror_room, new_room]
+                            
+                        up_down[0].purpose = 'Stairwell Up'
+                        up_down[1].purpose = 'Stairwell Shaft Leading Down'
+                        up_down[0].state = 'Stairs Leading Up From a Door'
+                        up_down[1].state = 'stairs filling the square from edge to edge'
+                        upstr = '''
+General: GRANITE STAIRS FROM ROOM.png
+1. MASK BOUNDARIES STRICT
+The floor is ONLY for the area defined by the floor mask in mask.png. Do NOT extend floor textures onto the white wall trapezoids. MASK IS A HARD CLIPPING PATH. The black pixels in MASK.png are a physical void.
+2. STAIR HEIGHT VS WALLS
+The stairs are physical stone blocks that are attached to the vertical walls. The walls represented by white trapezoids must look like 90-degree upright surfaces rather than flat floor. 
+3. DOOR MASK PRIORITY
+The door must be rendered flush against the floor at the doorway mask location. No stair wedges can overlap or exist inside the door's physical space. The DOOR must remain inside the door gap and flush with the vertical wall as a flat vertical plane.
+4. HEIGHT MAP DEPTH
+The grayscale in room.png is a Z-axis height map. Pure White is the highest point at 10ft elevation. Dark Grey is the lowest point at 0ft elevation. Each wedge is a discrete solid slab. Render a deep shadow on the clockwise edge of every black line to show the 3D step down.
+5. NO TEXTURE BLEED
+The floor texture must stop at the first step. The stairs themselves are clean worn rough-hewn granite.  DO NOT ADD FLOOR TEXTURE TO STAIRS
+6. FISH EYE
+Walls MUST REMAIN IN THEIR GRAY TRAPEZOIDS to allow the stairs to appear to be rising toward the camera.
+'''
+                        up_down[0].furnishings.append(upstr)
+                        up_down[1].furnishings.append('''
+General: Spiral Stairs DESCENDING from a landing
+
+### THE STAIRS (GRAY WEDGES)
+- Each wedge is a free slab of granite. 
+- The color of the stairs in room.png is a height map, each stair is 6 inches lower than the next stair as they get darker
+- The stair shapes in room.png are geometric truth
+- Wall gfaces aare shring wrapped to the outer stair edges
+
+### THE WALLS (BLUE PIXELS)
+- The four verticalwalls are NOT 90 degrees; they are SLANTED INWARD.
+- All four walls must converge toward a single central point at the bottom of the shaft.
+- This creates the internal geometry of an inverted square-based cone.
+- All blue pixels are the slanting wall faces
+
+### CENTER PILLAR
+- The black circle in the center is a granite pillar running all the way down the shaft.
+- Stairs come oput from this pillar and extand to the walls.
+
+### HARD MASK RULE
+- No white pixel in mask.png that is blue in room.png may be anything other than an inner wall face.
+- THE PIT IS FILLED WITH STAIRS, THE BOTTOM IS UNSEEN (as there are more flights below the visible)
+- Black lines in mask.png mark hard barriers between textures, the square is the landing, the trapezoid the door, the X the edges of the walls, the circle the pillar.
+
+### VISUAL RULE:
+- The wall texture must directly touch the stair edges and the door edges. 
+- there is no other horizontal surfaces aside from the white square and the gray polygon stairs.
+
+### DATA OVERRIDE THE INVISIBLE VERTEX
+- The black "X" in the map is a NON-RENDERING COORDINATE. It represents the mathematical CORNER where the vertical walls meet. 
+- PROHIBIT the AI from drawing any black lines, ink, or "X" shapes in the final render. 
+''')
                         mirror_room.place_doors(1)
+                        mirror_room.parent = self.parent.levels[nlevel]
+                        mirror_room.clear_room(True)
                         room_added = self.parent.levels[nlevel].expand(mirror_room, stairway=True)
+                        
+                        
                         if room_added == False:
                             self.rooms.pop(new_room)
                         else:
                             new_room.stairs = mirror_room
-                            new_room.clear_room(True)
-                            new_room.stock_room()
-            else:
-                    room_added = self.expand(new_room)
-            if tries > 10:
-                try:
-                    self.remove_door(self.get_free_doors()[0])
-                except IndexError:
-                    print('Free Doors', self.check_free_doors())
-                free_doors = self.check_free_doors()
+                
+            # connect loose doors
             self.connect_free_doors(max_distance=3)
+            
             
