@@ -177,7 +177,7 @@ class AIMegaDungeon:
                                                            "The Monsters Know What They Are Doing", for the first 3 rounds of combat, including surrender 
                                                             conditions/motivations
                                                             Also inclue any note on roleplay for the creatures.\n'''
-                encounter = self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(self.game))
+                encounter = self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(se
                 room.monster = '[Rolled]' + room.monsterb +'\n\n' + encounter
                 room_desc_basic = room_desc_basic + '\n\nEncounter: ' + room.monster
             else:
@@ -201,6 +201,7 @@ Floors: {}
 Ceiling: {}
 Wall: {}
                                             '''.format(room.parent.info['floors'],room.parent.info['ceilings'],room.parent.info['walls'])
+        room.description = room_description                                        
         return room_desc_basic   
    
     ## AI CALLS & TOOLS
@@ -1941,7 +1942,7 @@ class Room():
     '''
     A collection of blocks...
     '''
-    __slots__ = ('room_id', 'blocks','color', 'doors', 'is_exit', 'purpose', 'state', 'contents', 'parent', 'monster', 'treasure', 'furnishings', 'traps', 'hazards', 'hallway', 'stairs')
+    __slots__ = ('room_id', 'blocks','color', 'doors', 'is_exit', 'purpose', 'state', 'contents', 'parent', 'monster', 'treasure', 'furnishings', 'traps', 'hazards', 'hallway', 'stairs', 'description')
 
     def __init__(self, parent, position=Position(0,0), hallway=False, stairs=None, is_exit=False):      
         self.blocks = [Block(position)]
@@ -1961,6 +1962,7 @@ class Room():
         self.traps = ''
         self.hazards = ''
         self.stock_room(hallway)
+        self.description = ''
         
     def block_positions(self):
         return {block.position for block in self.blocks}
