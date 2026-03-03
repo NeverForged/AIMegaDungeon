@@ -24,16 +24,13 @@ import matplotlib.patches as patches
 from matplotlib.patches import Polygon
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
-import requests
-import base64
-
 
 from IPython.display import display, Image as IPImage
 
 class AIMegaDungeon:
     _slots_ = ('levels', 'game')
     
-    def __init__(self, filename=None, levelfile='levels.csv', keys='|', game='D&D 5E 2024'):
+    def __init__(self, filename='Test', levelfile='levels.csv', keys='|', game='D&D 5E 2024'):
         '''
       
 
@@ -49,17 +46,17 @@ class AIMegaDungeon:
         self.OPENROUTER_API_KEY = keys.split('|')[1]
         # Get the directory of the class
         self.current_dir = os.path.dirname(os.path.abspath(__file__))
-        new = 0
-        if filename != None: #load the old file
-            new = self.load(filename)
-            self.filename = filename        
-            self.levelsdf = pd.read_csv(self.file_path(levels), sep='\t')
-            new = 1
-        if new == 0: # need a new instance
-            self.filename = 'test' # input('Name this dungeon:')
+        self.filename = filename  
+        
+        try:
+            self.levels = self.load(filename)
+      
             self.levelsdf = pd.read_csv(self.file_path(levelfile), sep='\t')
-            
-            
+            new = 1
+        except: # need a new instance
+            print('New Dungeon...')
+            self.levelsdf = pd.read_csv(self.file_path(levelfile), sep='\t')
+            self.levels = {}
             
             with open(self.file_path('AppendixA.pickle'), 'rb') as file:   
                 self.AppendixA = pickle.load(file)
@@ -72,15 +69,14 @@ class AIMegaDungeon:
         return os.path.join(self.current_dir, '{}'.format(filename))
         
     def load(self, filename=None):
-            try:
-                with open(filename+'.aad', 'rb') as file:    
-                    self = pickle.load(file)
-            except:
-                return 0
-           
+        with open(self.file_path(filename+'.aad'), 'rb') as file:    
+                levels = pickle.load(file)
+        return levels
+    
     def save(self, filename='QuickSave'):
-        with open(filename+'.aad', 'wb') as file:
-            pickle.dump(self, file)  
+
+        with open(self.file_path(filename+'.aad'), 'wb') as file:
+            pickle.dump(self.levels, file)  
       
     ## D&D TABLES
     def roll_table(self, df):
@@ -160,7 +156,7 @@ class AIMegaDungeon:
         run_ai = False
         if room.is_exit == True:
             return 'This is an exit'
-        CR = 3+(2*abs(room.parent.info['level']))
+        CR = random.randint(1,3)+(2*abs(room.parent.info['level']))
         room_desc_basic = 'Purpose: {}'.format(room.purpose)
         room_desc_basic = room_desc_basic + '\n    State: {}'.format(room.state)
         doors = []
@@ -182,16 +178,16 @@ class AIMegaDungeon:
                                                             conditions/motivations
                                                             Also inclue any note on roleplay for the creatures.\n'''
                 encounter = self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(self.game))
-                room_desc_basic = room_desc_basic + '\n\nEncounter: ' + self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(self.game))
-                room.monster = '[Rolled]' + room.monster
+                room.monster = '[Rolled]' + room.monsterb +'\n\n' + encounter
+                room_desc_basic = room_desc_basic + '\n\nEncounter: ' + room.monster
             else:
                 oom_desc_basic = room_desc_basic + room.monster
         if room.treasure != '':
             if ('art' in room.treasure or 'Table' in room.treasure or 'gems' in room.treasure) and '[Rolled]' not in room.treasure :
                 prompt = 'Roll on the appropriate d&d 5e 2024 tables and write details (gem types and art description) for the following treasure: {}'.format(room.treasure)
                 treasure_rolls = self.get_chat_response(prompt, role='You are a talented Quest Writer for D&D 5e 2024')
-                room.treasure = '[Rolled] ' + treasure_rolls
-                room_desc_basic = room_desc_basic + '\nTreasure: ' + treasure_rolls
+                room.treasure = '[Rolled] ' + treasure + '\n\n' + treasure_rolls
+                room_desc_basic = room_desc_basic + '\nTreasure: ' + room.treasure
             else: 
                 room_desc_basic = room_desc_basic + '\nTreasure: ' + room.treasure
         if room.traps != '':
@@ -2522,8 +2518,7 @@ class Dungeon():
                 max_distance, dungeon_door, new_room_door, x, y = self.room_position_from_door(max_distance, new_room, dungeon_positions, dungeon_door)
                 if max_distance != -1:
                     yield (max_distance, dungeon_door, new_room_door, x, y)
-        
-        
+               
     def room_position_from_door(self, max_intersection_radius, new_room, dungeon_positions, dungeon_door):
         '''
         dungeon_door = a door border, not a door object
@@ -2618,6 +2613,8 @@ class Dungeon():
                         self.corridors.append(new_corridor)
                         
                         return True
+                    elif new_room.blocks == 1:  #if a 1-square room fails, the door is cursed
+                        self.remove_door(door)
            
         return False
        
