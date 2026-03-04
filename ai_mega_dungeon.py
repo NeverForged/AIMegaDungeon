@@ -47,6 +47,7 @@ class AIMegaDungeon:
         # Get the directory of the class
         self.current_dir = os.path.dirname(os.path.abspath(__file__))
         self.filename = filename  
+        self.game = game
         
         try:
             self.levels = self.load(filename)
@@ -153,56 +154,68 @@ class AIMegaDungeon:
  
     ## D&D FUNCTIONS
     def make_description(self, room):
-        run_ai = False
-        if room.is_exit == True:
-            return 'This is an exit'
-        CR = random.randint(1,3)+(2*abs(room.parent.info['level']))
-        room_desc_basic = 'Purpose: {}'.format(room.purpose)
-        room_desc_basic = room_desc_basic + '\n    State: {}'.format(room.state)
-        doors = []
-        for door in [door for door in room.doors if 'Secret' not in door.door_type]:
-            for border in door.borders:
-                if border.position.point() in [block.position.point() for block in room.blocks]:
-                    location = 'On the {} wall at {}'.format(direction_to_compass(border.direction),border.position.point())
-            if 'Portcullis' not in door.door_type:
-                doors.append('   - {} Door [{}]'.format(door.door_type, location))
-            else:
-                doors.append('{} [{}]'.format(door.door_type, location))
-        if len(doors) >= 1:
-            room_desc_basic = room_desc_basic + '\nDoors: \n{}'.format('\n'.join(doors))
-        if room.monster != '':
-            if '[Rolled]' not in room.monster:
-                prompt = 'Write a {} Encounter: Create a Medium CR {} encounter based around {}\n'.format(self.game, CR, room.monster)
-                prompt = prompt + '''   Be sure to include a basic outline of combat strategy, as if you were the author of 
-                                                           "The Monsters Know What They Are Doing", for the first 3 rounds of combat, including surrender 
-                                                            conditions/motivations
-                                                            Also inclue any note on roleplay for the creatures.\n'''
-                encounter = self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(se
-                room.monster = '[Rolled]' + room.monsterb +'\n\n' + encounter
-                room_desc_basic = room_desc_basic + '\n\nEncounter: ' + room.monster
-            else:
-                oom_desc_basic = room_desc_basic + room.monster
-        if room.treasure != '':
-            if ('art' in room.treasure or 'Table' in room.treasure or 'gems' in room.treasure) and '[Rolled]' not in room.treasure :
-                prompt = 'Roll on the appropriate d&d 5e 2024 tables and write details (gem types and art description) for the following treasure: {}'.format(room.treasure)
-                treasure_rolls = self.get_chat_response(prompt, role='You are a talented Quest Writer for D&D 5e 2024')
-                room.treasure = '[Rolled] ' + treasure + '\n\n' + treasure_rolls
-                room_desc_basic = room_desc_basic + '\nTreasure: ' + room.treasure
-            else: 
-                room_desc_basic = room_desc_basic + '\nTreasure: ' + room.treasure
-        if room.traps != '':
-            room_desc_basic = room_desc_basic + '\nTRAP: ' + room.traps
-        if room.hazards != '':
-            room_desc_basic = room_desc_basic + '\nHazard: {}'.format(room.hazards)
-        for furnishing in room.furnishings:
-            room_desc_basic = room_desc_basic + '\n{}'.format(furnishing)
-        room_desc_basic = room_desc_basic + '''
-Floors: {}
-Ceiling: {}
-Wall: {}
-                                            '''.format(room.parent.info['floors'],room.parent.info['ceilings'],room.parent.info['walls'])
-        room.description = room_description                                        
-        return room_desc_basic   
+        if room.description == '':
+            if room.is_exit == True:
+                room.description = 'This is an exit'
+                return room.description
+            CR = random.randint(1,3)+(2*abs(room.parent.info['level']))
+            room_desc_basic = 'Purpose: {}'.format(room.purpose)
+            room_desc_basic = room_desc_basic + '\n    State: {}'.format(room.state)
+            doors = []
+            for door in [door for door in room.doors if 'Secret' not in door.door_type]:
+                for border in door.borders:
+                    if border.position.point() in [block.position.point() for block in room.blocks]:
+                        location = 'On the {} wall at {}'.format(direction_to_compass(border.direction),border.position.point())
+                if 'Portcullis' not in door.door_type:
+                    doors.append('   - {} Door [{}]'.format(door.door_type, location))
+                else:
+                    doors.append('{} [{}]'.format(door.door_type, location))
+            if len(doors) >= 1:
+                room_desc_basic = room_desc_basic + '\nDoors: \n{}'.format('\n'.join(doors))
+            if room.monster != '':   # AI CALL
+                if '[Rolled]' not in room.monster:
+                    prompt = 'Write a {} Encounter: Create a Medium CR {} encounter based around {}\n'.format(self.game, CR, room.monster)
+                    prompt = prompt + '    - Be sure to include a basic outline of combat strategy, as if you were the author of "The Monsters Know What They Are Doing", for the first 3 rounds of combat, including surrender conditions/motivations\n'
+                    prompt = prompt + '    - Inclue any note on roleplay for the creatures.\n'
+                    propmt = propmt + "    - Include the numbers of creatures, and adjust fro 4-6 characters"
+                    prompt = prompt + '''    - Add an Esculation Clock appropriate to the room and encounter 
+                    [Esculation Clocks track hazards (volcano eruptions, crumbling floors), NPC actions (guards arriving), or environmental changes (tide changes, magic fading)
+                    The Escalation Clock Pattern
+                        Duration: Set a countdown of 1d4+1 rounds (literally write 1d4+1...)
+                        The Telegraph (The "Tell"): Describe a sensory warning that intensifies each round (e.g., a sound, a visual crack, a rising temperature).
+                        The Payload (The "Snap"): Define a significant mechanical shift that occurs when the clock hits zero. It must either damage the players, block an path, or add new threats. It should change the "win condition" of the room.]\n
+                    '''
+                    prompt = prompt + '\n\nInclude the CR, HP, AC, and lookup information (book, pg number) for each monster\n\n'
+                    prompt = prompt + '\n\nRoom Description: {} [{}]'.format(room.purpose, room.state)
+                    prompt = prompt + '    - room is {} square feet'.format(5*len(room.blocks))
+                    prompt = prompt + '\n    Doors: \n{}'.format('        \n'.join(doors))
+                    if room.traps != '' or room.hazards != '':
+                        prompt = prompt + '\n    Traps & Hazards: {}'.format('; '.join([room.traps,room.hazards]))
+                    prompt = prompt + '\n{}'.format('\n     '.join(room.furnishings))
+                    encounter = self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(self.game))
+                    room.monster = '[Rolled]' + room.monster +'\n\n' + encounter
+                    room_desc_basic = room_desc_basic + '\n\nEncounter: ' + room.monster +'\n'
+                else:
+                    room_desc_basic = room_desc_basic + room.monster
+            if room.treasure != '':  # Potential AI Call
+                if ('art' in room.treasure or 'Table' in room.treasure or 'gems' in room.treasure) and '[Rolled]' not in room.treasure :
+                    prompt = 'Roll on the appropriate d&d 5e 2024 tables and write details (gem types for gems, art description for art, etc.) for the following treasure: {}'.format(room.treasure)
+                    treasure_rolls = self.get_chat_response(prompt, role='You are a talented Quest Writer for D&D 5e 2024')
+                    room.treasure = '[Rolled] ' + room.treasure + '\n\n' + treasure_rolls
+                    room_desc_basic = room_desc_basic + '\nTreasure: ' + room.treasure
+                else: 
+                    room_desc_basic = room_desc_basic + '\nTreasure: ' + room.treasure
+            if room.traps != '':
+                room_desc_basic = room_desc_basic + '\nTRAP: ' + room.traps
+            if room.hazards != '':
+                room_desc_basic = room_desc_basic + '\nHazard: {}'.format(room.hazards)
+            for furnishing in room.furnishings:
+                room_desc_basic = room_desc_basic + '\n{}'.format(furnishing)
+            room_desc_basic = room_desc_basic + f"\nFloors: {room.parent.info['floors']}"
+            room_desc_basic = room_desc_basic + f"\nCeiling: {room.parent.info['ceilings']}"
+            room_desc_basic = room_desc_basic + f"\nWall: {room.parent.info['walls']}"
+            room.description = room_desc_basic                                       
+        return room.description   
    
     ## AI CALLS & TOOLS
     def get_chat_response(self, prompt, role="You are a helpful assistant.", model="gpt-3.5-turbo"):
@@ -316,7 +329,6 @@ Wall: {}
         # Color the room.png file...
         plt.fill(*zip(*make_contour(wallborders)), 'b', alpha=1)
         if 'stairwell' in room.purpose.lower() and 'down' in room.purpose.lower():
-            print('ding!')
             nborders = list(room.door_geometry_borders())
             plt.fill(*zip(*make_contour(nborders)), '#ffffff')
         else:
@@ -340,7 +352,6 @@ Wall: {}
             direction = door.borders[door.rooms.index(room)].direction
             dx = xx - center_x
             dy = yy - center_y
-            print(yy, center_y)
             start_angle = get_start_angle(room, direction, center_x, center_y, xx, yy)
             if 'down' in room.purpose.lower():
                     start_angle = -start_angle
@@ -450,10 +461,7 @@ Wall: {}
                 plt.fill(xlst, ylst, color='saddlebrown', alpha=1.0, zorder=20)
                 plt.gca().set_xlim(curr_xlim)
                 plt.gca().set_ylim(curr_ylim)
-            else:
-                print('SECRET DOOR!')
-         
-
+        
         plt.savefig(self.file_path("room.png".format(room.room_id, room.parent.info['level'])), dpi=300, bbox_inches='tight')
         if show == True:
             plt.show()
@@ -496,7 +504,6 @@ Wall: {}
                     rd = True
                     rt = door.door_type
             elif border.direction == DIRECTION.UP:
-                print(door.door_type)
                 if 'secret' not in door.door_type.lower():
                     ud = True
                     ut = door.door_type
@@ -2333,21 +2340,23 @@ class Room():
                 mon_type = self.contents.split(')')[0]+')'
                 monlist = self.parent.info[mon_type].split(', ')
                 self.monster = random.sample(monlist,1)[0]
-                self.monster = '{} [Motivation: {}]'.format(self.monster, self.parent.parent.roll_table(self.parent.parent.AppendixA['Monster Motivation']))
+                self.monster = '{} [Monster Motivation: {}]'.format(self.monster, self.parent.parent.roll_table(self.parent.parent.AppendixA['Monster Motivation']))
                 
             if 'Hazard' in self.contents:
                 self.hazards = self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Hazards'])
+                self.furnishings.append('General Hazards: {}'.format(self.hazards))
                 
             if 'Obstacle' in self.contents:
-                self.hazards = self.parent.parent.roll_table(self.parent.parent.AppendixA['Obstacles'])
+                self.hazards = self.hazards + '\n\n' + self.parent.parent.roll_table(self.parent.parent.AppendixA['Obstacles'])
+                self.furnishings.append('General Obstacles: {}'.format(self.hazards))
             
             if 'Trap' in self.contents:
-                self.traps = 'Trap({}):{} [Trigger: {}]'.format(self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Damage Severity'])
+                self.traps = 'Trap({}):{} [Trigger: {}]\n'.format(self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Damage Severity'])
                                                              , self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Effects'])
                                                              , self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Trigger']))
             if 'Trick' in self.contents:
                 tobj = self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Tricks']['Trick Objects'])
-                self.traps = 'Trick {}: {}'.format(tobj, self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Tricks']['Tricks']))
+                self.traps = self.traps + 'Trick {}: {}'.format(tobj, self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Tricks']['Tricks']))
                 self.furnishings.append('General Features: {}'.format(tobj))
                 
             if 'treasure' in self.contents:
@@ -2359,17 +2368,17 @@ class Room():
                 self.treasure = self.parent.parent.get_treasure(CR, hoard)
         
         
-        for key in self.parent.parent.AppendixA['Dungeon Dressings'].keys():
-            if key != 'Specific' and 'General' not in key:
-                self.furnishings.append('{}: {}'.format(key, self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Dressings'][key])))
-            if 'General' in key and self.hallway == False and self.stairs == None:
-                for i in range(random.randint(1,len(self.doors)+1)):
+            for key in self.parent.parent.AppendixA['Dungeon Dressings'].keys():
+                if key != 'Specific' and 'General' not in key:
                     self.furnishings.append('{}: {}'.format(key, self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Dressings'][key])))
-            if key == 'Specific':
-                for skey in self.parent.parent.AppendixA['Dungeon Dressings'][key]:
-                    for a in skey.split(' '):
-                        if a.lower() in self.purpose.lower():
-                            self.furnishings.append('{}: {}'.format('General Furnishings and Appointments', self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Dressings'][key][skey])))
+                if 'general' in key.lower() and self.hallway == False and self.stairs == None:
+                    for i in range(random.randint(2,len(self.doors)+2)):
+                        self.furnishings.append('{}: {}'.format(key, self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Dressings'][key])))
+                if key == 'Specific':
+                    for skey in self.parent.parent.AppendixA['Dungeon Dressings'][key]:
+                        for a in skey.split(' '):
+                            if a.lower() in self.purpose.lower():
+                                self.furnishings.append('{}: {}'.format('General Furnishings and Appointments ['+skey+']', self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Dressings'][key][skey])))
                                          
 class Door():
     """
@@ -2847,7 +2856,6 @@ class Dungeon():
                 new_room = self.create_room(0,1,is_exit=True)
             else:
                 d20 = random.randint(1,20)
-                print(d20)
                 if d20 <= 2:
                     # Passage extending 10 ft., then T intersection extending 10 ft. to the right and left
                     new_room = self.create_tpassage(3)
@@ -2911,13 +2919,11 @@ class Dungeon():
             else:
                 stairs = True
             if stairs == True:
-                print('1 we have stairs')
                 # stair code...
                 new_levels = []
                 room_added = False
                 new_room = self.create_rectangle_room(10,10,1)
                 nd20 = random.randint(1,20)
-                print('2 we have stairs')
                 up = True
                 if nd20 <= 12 or nd20 == 16 or nd20 == 18:
                     # Down one level to a chamber
@@ -2926,12 +2932,10 @@ class Dungeon():
                 elif nd20 >= 13 and nd20 <= 15 or nd20 == 17 or nd20 >= 19:
                     #	Up one level to a chamber
                     nlevel, check = self.check_level(1)
-                print('3 we have stairs', nlevel, check)
                 if check:
                     mirror_room = Room(self, stairs=new_room)
                     mirror_room.blocks = []
                     check = self.expand(new_room)
-                    print('4 we have stairs', check)
                     if check == True:
                         # add the blocks
                         for block in new_room.blocks:
