@@ -3,6 +3,7 @@ import io
 import cv2
 import json
 import enum
+import time
 import heapq
 import shutil
 import pickle
@@ -14,15 +15,20 @@ import warnings
 import collections
 import numpy as np
 import pandas as pd
+import networkx as nx
 import random as rand
 from PIL import Image
 from scipy import ndimage
+from datetime import datetime
 import matplotlib.image as img
 import matplotlib.pyplot as plt
 import matplotlib.path as mpath
 import matplotlib.patches as patches
 from matplotlib.patches import Polygon
+from dateutil.relativedelta import relativedelta
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+
+
 
 
 from IPython.display import display, Image as IPImage
@@ -30,7 +36,7 @@ from IPython.display import display, Image as IPImage
 class AIMegaDungeon:
     _slots_ = ('levels', 'game')
     
-    def __init__(self, filename='Test', levelfile='levels.csv', keys='|', game='D&D 5E 2024'):
+    def __init__(self, filename='Test', levelfile='levels.csv', keys='|', game='D&D 5E 2024', rel_year =  -670, relday = 180, relmonth = 6):
         '''
       
 
@@ -48,6 +54,9 @@ class AIMegaDungeon:
         self.current_dir = os.path.dirname(os.path.abspath(__file__))
         self.filename = filename  
         self.game = game
+        self.G = nx.Graph()
+        self.time = 0
+        self.reltime = relativedelta(year=rel_year, day=relday, month=relmonth)
         
         try:
             self.levels = self.load(filename)
@@ -68,17 +77,163 @@ class AIMegaDungeon:
     ## ADMIN FUNCTIONS
     def file_path(self, filename):
         return os.path.join(self.current_dir, '{}'.format(filename))
-        
-    def load(self, filename=None):
-        with open(self.file_path(filename+'.aad'), 'rb') as file:    
-                levels = pickle.load(file)
-        return levels
-    
+           
     def save(self, filename='QuickSave'):
-
-        with open(self.file_path(filename+'.aad'), 'wb') as file:
+        '''
+        Save bookeeping functions and the dungeon
+        '''
+        
+        dct['levels'] = self.levels
+        dct['time'] =self. time
+        dct['reltime'] = self.reltime
+        with open(filename+'.aad', 'wb') as file:
             pickle.dump(self.levels, file)  
-      
+              
+    def load(self, filename=None):
+        '''
+        Load bookeepiung functions
+        '''
+
+        with open(filename+'.aad', 'rb') as file:    
+                dct = pickle.load(file)
+                
+        self.levels = dct['levels'] 
+        self.time = dct['time']
+        self.reltime = dct['reltime']
+                  
+    def date(self):
+        return datetime.fromtimestamp(self.time) + self.reltime
+    
+    ## Dungeon Functions
+    def make_dungeon(self, rooms=35, start=False, finish=False):
+        """
+        This tries to make the dungeon...
+        - it adds rooms rooms to the dungeon
+        - start adds a starting area to level 0
+        - finish eliminates the extra free doors
+        """
+        
+        if start: # must be done when you first build it...
+            self.levels = {}
+            self.corridors = []
+            for i, row in self.levelsdf.iterrows():
+                self.levels[row['level']] = Dungeon(info=row, parent=self)
+            self.levels[0].starting_room()
+
+        min_level = 0
+        max_level = 0
+        # then we build or expand by rooms...
+        for i in range(rooms):
+            print('{}%'.format(int(100*i/rooms)),'\r')
+            has_rooms = 0
+            max_rooms = 0
+            wait = False
+            for lvl, row in self.levelsdf.iterrows():
+                check = len(self.levels[row['level']].rooms)
+                if check > max_rooms:
+                    max_rooms = check
+                if check > 0:
+                    has_rooms += 1
+            for lvl, row in self.levelsdf.iterrows():
+                check = len(self.levels[row['level']].rooms)
+                if check < max_rooms:
+                    wait = True
+            for lvl, row in self.levelsdf.iterrows():    
+                self.levels[row['level']].add_area()
+                # add rooms to smaller and "new" levels
+                tries = 0
+                while len(self.levels[row['level']].rooms) < max_rooms + random.randint(-7,0) and len(self.levels[row['level']].rooms) != 0 and self.levels[row['level']].check_free_doors() >= 1 and tries <= 100:
+                    self.levels[row['level']].add_area()
+                    tries += 1     
+                if len(self.levels[row['level']].rooms) > 0 and row['level'] > max_level:
+                    max_level = row['level']
+                elif len(self.levels[row['level']].rooms) > 0 and row['level'] < min_level:
+                    min_level = row['level']
+        if finish == True:
+            #kill doors
+            for lvl, row in self.levelsdf.iterrows():
+                dungeon = self.levels[row['level']]
+                [dungeon.remove_door(door) for door in dungeon.get_free_doors()]
+        return min_level, max_level
+
+    def graph_dungeon(self):
+        '''
+        Creates a NetworkX graph of the dungeon, where doors and rooms are nodes
+        this allows calculation of quickest paths and allows the next door in quickest path
+        to be found.
+        '''
+        # Add to graph
+        self.G = nx.Graph()
+        # We rebuild the graph each time in case doors are cut off
+        for lvl, row in self.levelsdf.iterrows():
+            # add to Graph...
+            for room in self.levels[row['level']].rooms:
+                rm_type = 'room'
+                if room.stairs != None:
+                    self.G.add_edge(room, room.stairs)
+                    rm_type = 'stair'
+                elif room.is_exit == True:
+                    rm_type = 'exit'
+                self.G.add_node(room
+                        , type=rm_type
+                        , label='{}'.format(' '.join(room.purpose.split(' ')[0])))
+                [self.G.add_edge(room, door) for door in room.doors]
+                [self.G.add_node(door, type='door',label=door.door_type.split(' ')[0].replace(',','')) for door in room.doors]
+
+    def get_dungeon_floorplans(self, show=True, levels=None):
+        '''
+        Creates floor graphs of the dungeon.  
+        This isn't necessary, but can be fun to look at
+        '''
+        if levels == None:
+            levels = [row['level'] for lvl, row in self.levelsdf.iterrows()]
+        if type(levels)==int:
+            levels = [levels]
+        
+        for lvl, row in self.levelsdf.iterrows():
+            if len(self.levels[row['level']].rooms) > 0 and row['level'] in levels:
+                print('Level', row['level'], 'rooms', len(self.levels[row['level']].rooms))
+                print('free doors', self.levels[row['level']].check_free_doors())
+                print('Exits', sum([room.is_exit for room in self.levels[row['level']].rooms]))
+                print('Stairs', len([room for room in self.levels[row['level']].rooms if 'stairwell' in room.purpose.lower()]))
+                self.levels[row['level']].draw_dungeon(show)
+
+    def check_dungeon(self):
+        '''
+        This outputs levels that have rooms, as well as
+        - number of rooms
+        - free doors
+        - Exits
+        - Stairs
+        Good for determining if the dungeon is the correct size without
+        knowing the layout
+        '''
+        for lvl, row in self.levelsdf.iterrows():
+            if len(self.levels[row['level']].rooms) > 0:
+                print('Level', row['level'], 'rooms', len(self.levels[row['level']].rooms))
+                print('free doors', self.levels[row['level']].check_free_doors())
+                print('Exits', sum([room.is_exit for room in self.levels[row['level']].rooms]))
+                print('Stairs', len([room for room in self.levels[row['level']].rooms if 'stairwell' in room.purpose.lower()]))
+    
+    def remove_room(self, room):
+        # kill the borders
+        if room.stairs:
+            room.stairs.stairs = None
+            room.parent.remove_room(room.stairs)
+        for door in room.doors:
+            for border in door.borders:
+                if border.position.point() in [block.position.point() for block in room.blocks]:
+                    door.borders.remove(border)
+                    # corridors
+                    for corridor in room.parent.corridors:
+                        if corridor.start_border == border or corridor.stop_border == border:
+                            room.parent.corridors.remove(corridor)
+            # kill the doors..
+            door.rooms.remove(room)
+        # remove the room
+        room.parent.rooms.remove(room)
+        del room
+    
     ## D&D TABLES
     def roll_table(self, df):
         droll = random.randint(1,max(df['Roll']))
@@ -158,6 +313,8 @@ class AIMegaDungeon:
             if room.is_exit == True:
                 room.description = 'This is an exit'
                 return room.description
+            else:
+                room.color = 'green'
             CR = random.randint(1,3)+(2*abs(room.parent.info['level']))
             room_desc_basic = 'Purpose: {}'.format(room.purpose)
             room_desc_basic = room_desc_basic + '\n    State: {}'.format(room.state)
@@ -177,13 +334,14 @@ class AIMegaDungeon:
                     prompt = 'Write a {} Encounter: Create a Medium CR {} encounter based around {}\n'.format(self.game, CR, room.monster)
                     prompt = prompt + '    - Be sure to include a basic outline of combat strategy, as if you were the author of "The Monsters Know What They Are Doing", for the first 3 rounds of combat, including surrender conditions/motivations\n'
                     prompt = prompt + '    - Inclue any note on roleplay for the creatures.\n'
-                    propmt = propmt + "    - Include the numbers of creatures, and adjust fro 4-6 characters"
+                    prompt = prompt + "    - Include the numbers of creatures, and adjust fro 4-6 characters"
                     prompt = prompt + '''    - Add an Esculation Clock appropriate to the room and encounter 
                     [Esculation Clocks track hazards (volcano eruptions, crumbling floors), NPC actions (guards arriving), or environmental changes (tide changes, magic fading)
                     The Escalation Clock Pattern
                         Duration: Set a countdown of 1d4+1 rounds (literally write 1d4+1...)
                         The Telegraph (The "Tell"): Describe a sensory warning that intensifies each round (e.g., a sound, a visual crack, a rising temperature).
                         The Payload (The "Snap"): Define a significant mechanical shift that occurs when the clock hits zero. It must either damage the players, block an path, or add new threats. It should change the "win condition" of the room.]\n
+                        Payload should not add architecture.
                     '''
                     prompt = prompt + '\n\nInclude the CR, HP, AC, and lookup information (book, pg number) for each monster\n\n'
                     prompt = prompt + '\n\nRoom Description: {} [{}]'.format(room.purpose, room.state)
@@ -216,7 +374,70 @@ class AIMegaDungeon:
             room_desc_basic = room_desc_basic + f"\nWall: {room.parent.info['walls']}"
             room.description = room_desc_basic                                       
         return room.description   
-   
+    
+    def random_encounter(self, room, party_is='Exploring'):
+        '''
+        Rolls a random encounter...
+        2d6 1 = shift level +1, roll again
+            3-4 = Monster (random creature)
+            5-6 = Monster (pet or allied creature)
+            7 = Monster (dominant inhabitant)
+            8-9 = Monster (pet or allied creature)
+            10-11 = Monster (random creature)
+            12 = shift level -1, roll again
+        '''
+        level = room.parent.info['level']
+        encounter = ''
+        while encounter == '':
+            CR = random.randint(1,3)+abs(level)
+            monster = ''
+            n2d6 = random.randint(1,6)+random.randint(1,6)
+            if n2d6 == 1:
+                if sum(self.levelsdf['level']==level+1) == 1:
+                    level = level +1
+            elif (n2d6 >= 3 and n2d6 <= 4) or (n2d6 >= 10 and n2d6 <= 11):
+                lst  = self.levelsdf[self.levelsdf['level']==level]['Monster (random creature)'].values[0].split(', ')
+                monster = lst[random.randint(0,len(lst)-1)]
+                monster = '{} [Monster Motivation: {}]'.format(monster, self.roll_table(self.AppendixA['Monster Motivation']))
+            elif (n2d6 >=5 and n2d6 <= 6) or (n2d6 >= 8 and n2d6 <= 9):
+                lst  = self.levelsdf[self.levelsdf['level']==level]['Monster (pet or allied creature)'].values[0].split(', ')
+                monster = lst[random.randint(0,len(lst)-1)]
+                monster = '{} [Monster Motivation: {}]'.format(monster, self.roll_table(self.AppendixA['Monster Motivation']))        
+            elif (n2d6 == 7):
+                lst  = self.levelsdf[self.levelsdf['level']==level]['Monster (dominant inhabitant)'].values[0].split(', ')
+                monster = lst[random.randint(0,len(lst)-1)]
+                monster = '{} [Monster Motivation: {}]'.format(monster, self.roll_table(self.AppendixA['Monster Motivation']))
+            elif (n2d6 == 12):
+                if sum(self.levelsdf['level']==level-1) == 1:
+                    level = level -1
+            if monster != '':
+                prompt = 'The party is currently {} in a room described as: {}.\n'.format(party_is, room.purpose)
+                prompt = prompt + '\n\nWrite a {} Random Encounter: Create a Medium CR {} encounter based around {} entering the area\n\n'.format(self.game, CR,monster)
+                prompt = prompt + '    - Be sure to include a basic outline of combat strategy, as if you were the author of "The Monsters Know What They Are Doing", for the first 3 rounds of combat, including surrender conditions/motivations\n'
+                prompt = prompt + '    - Inclue any note on roleplay for the creatures.\n'
+                prompt = prompt + '\n\nInclude the CR, HP, AC, and lookup information (book, pg number) for each monster\n\n'
+                if room.description == '':
+                    doors = []
+                    for door in [door for door in room.doors if 'Secret' not in door.door_type]:
+                        for border in door.borders:
+                            if border.position.point() in [block.position.point() for block in room.blocks]:
+                                location = 'On the {} wall at {}'.format(direction_to_compass(border.direction),border.position.point())
+                        if 'Portcullis' not in door.door_type:
+                            doors.append('   - {} Door [{}]'.format(door.door_type, location))
+                        else:
+                            doors.append('{} [{}]'.format(door.door_type, location))
+                    prompt = prompt + '\n\nRoom Description: {} [{}]'.format(room.purpose, room.state)
+                    prompt = prompt + '    - room is {} square feet'.format(5*len(room.blocks))
+                    prompt = prompt + '\n    Doors: \n{}'.format('        \n'.join(doors))
+                    if room.traps != '' or room.hazards != '':
+                        prompt = prompt + '\n    Traps & Hazards: {}'.format('; '.join([room.traps,room.hazards]))
+                    prompt = prompt + '\n{}'.format('\n     '.join(room.furnishings))
+                else:
+                    prompt = prompt + '\n\n(Note as the {} arrive, we are still running: {}, this is adding to that encounter)'.format(monster, room.description)
+                encounter = self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(self.game))
+                room.monster = '[Rolled] ' + ', '.join([a for a in [room.monster,monster] if a != '']) +'\n\n' + encounter
+        return encounter 
+  
     ## AI CALLS & TOOLS
     def get_chat_response(self, prompt, role="You are a helpful assistant.", model="gpt-3.5-turbo"):
         client = openai.OpenAI(api_key=self.OPENAI_API_KEY) # Create an OpenAI client instance
@@ -619,7 +840,7 @@ class AIMegaDungeon:
                 print("⚠️ No image returned — model may have replied with text only.")
         else:
             print("❌ API Error", response.status_code, response.text)
-    
+  
     """
    
         
@@ -1424,9 +1645,6 @@ class DIRECTION(enum.Enum):
 # Utils
 #######
 
-def random_color():
-    return '#' + ''.join([random.choice('0123456789') for i in range(6)])
-
 def points_at_circle(x, y, radius):
     points = set()
 
@@ -1825,8 +2043,7 @@ class Border():
         if self.direction == DIRECTION.DOWN:
             return [self.position.move(1, 0).point(),
                     self.position.move(0, 0).point()]
-    
-     
+        
     def wall_geometry_borders(self):
         '''
         creates the geometry of the wall borders
@@ -1949,11 +2166,11 @@ class Room():
     '''
     A collection of blocks...
     '''
-    __slots__ = ('room_id', 'blocks','color', 'doors', 'is_exit', 'purpose', 'state', 'contents', 'parent', 'monster', 'treasure', 'furnishings', 'traps', 'hazards', 'hallway', 'stairs', 'description')
+    __slots__ = ('room_id', 'blocks', 'color', 'doors', 'is_exit', 'purpose', 'state', 'contents', 'parent', 'monster', 'treasure', 'furnishings', 'traps', 'hazards', 'hallway', 'stairs', 'description')
 
     def __init__(self, parent, position=Position(0,0), hallway=False, stairs=None, is_exit=False):      
         self.blocks = [Block(position)]
-        self.color = random_color()
+        self.color = 'gray'  #random_color()
         self.doors = []
         self.is_exit = is_exit
         self.purpose = ''
@@ -2308,10 +2525,11 @@ class Room():
         self.contents = 'Empty room'
         self.monster = ''
         self.traps = ''
-        self.hazards = ''
         self.treasure = ''
         if clear_all:
             self.furnishings = []
+            self.hazards = ''
+        self.color = 'gray'
         
     def stock_room(self, hallway=False):
         '''
@@ -2319,8 +2537,11 @@ class Room():
         # Purpose, it's that little flame...
         if self.hallway:
             self.purpose = 'Hallway'
+            self.color = 'white'
         elif self.stairs != None:
             self.purpose = 'Stairs'
+            self.color = 'green'
+            self.contents = ''
         elif self.is_exit == True:
             self.purpose = 'Exit (not a real room)'
             self.color = '#000000'
@@ -2331,8 +2552,9 @@ class Room():
                 self.purpose = self.parent.parent.roll_table(self.parent.parent.AppendixA['Purpose']['General Dungeon Chambers'])
         self.state = self.parent.parent.roll_table(self.parent.parent.AppendixA['Current_Chamber_State'])
 
-        if self.hallway == True or self.stairs != None or self.is_exit == True:
+        if self.hallway == True or self.is_exit == True:
             self.contents = 'Empty room'
+            self.color = 'gray'
         else:
             self.contents =  self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Chamber Contents'])
         
@@ -2341,19 +2563,16 @@ class Room():
                 monlist = self.parent.info[mon_type].split(', ')
                 self.monster = random.sample(monlist,1)[0]
                 self.monster = '{} [Monster Motivation: {}]'.format(self.monster, self.parent.parent.roll_table(self.parent.parent.AppendixA['Monster Motivation']))
-                
             if 'Hazard' in self.contents:
                 self.hazards = self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Hazards'])
                 self.furnishings.append('General Hazards: {}'.format(self.hazards))
-                
             if 'Obstacle' in self.contents:
                 self.hazards = self.hazards + '\n\n' + self.parent.parent.roll_table(self.parent.parent.AppendixA['Obstacles'])
                 self.furnishings.append('General Obstacles: {}'.format(self.hazards))
-            
             if 'Trap' in self.contents:
                 self.traps = 'Trap({}):{} [Trigger: {}]\n'.format(self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Damage Severity'])
-                                                             , self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Effects'])
-                                                             , self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Trigger']))
+                                                         , self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Effects'])
+                                                         , self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Trigger']))
             if 'Trick' in self.contents:
                 tobj = self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Tricks']['Trick Objects'])
                 self.traps = self.traps + 'Trick {}: {}'.format(tobj, self.parent.parent.roll_table(self.parent.parent.AppendixA['Random Tricks']['Tricks']))
@@ -2434,14 +2653,15 @@ class Corridor():
         return points
 
 class Dungeon():
-    __slots__ = ('rooms','corridors','level', 'info', 'parent')
+    __slots__ = ('rooms','corridors','level', 'info', 'parent','stair_threshold')
 
-    def __init__(self, info=None, parent=None):
+    def __init__(self, info=None, parent=None, stair_threshold=20):
         self.rooms = []
         self.corridors = []
         self.info = info
         self.parent = parent
         self.level = self.info['level']
+        self.stair_threshold = stair_threshold
 
     def create_room(self, blocks, doors, trap=False, is_exit=False):
         room = Room(self, is_exit=is_exit)
@@ -2450,6 +2670,11 @@ class Dungeon():
             room.expand()
 
         room.place_doors(doors, trap)
+        
+        if trap == True:
+            room.clear_room()
+            room.purpose = 'Door Trap'
+            room.state ='empty save fro trap mechanism(s)'
 
         return room
         
@@ -2845,6 +3070,7 @@ class Dungeon():
         Rolls on some tables from the DMG
         '''
         stairs = False
+        down_prior = False
         room_added = False
         free_doors = self.check_free_doors()
         tries = 0
@@ -2856,6 +3082,13 @@ class Dungeon():
                 new_room = self.create_room(0,1,is_exit=True)
             else:
                 d20 = random.randint(1,20)
+                # make sure we have some stairs...
+                if len(self.rooms) >= self.stair_threshold:
+                    nlevel, check = self.check_level(-1)
+                    stairs_down = len([room for room in self.rooms if 'stairwell' in room.purpose.lower() and 'down' in room.purpose.lower()])
+                    if stairs_down == 0 and check == True:
+                        d20 = 19  #we need some stairs..
+                        down_prior = True
                 if d20 <= 2:
                     # Passage extending 10 ft., then T intersection extending 10 ft. to the right and left
                     new_room = self.create_tpassage(3)
@@ -2925,7 +3158,7 @@ class Dungeon():
                 new_room = self.create_rectangle_room(10,10,1)
                 nd20 = random.randint(1,20)
                 up = True
-                if nd20 <= 12 or nd20 == 16 or nd20 == 18:
+                if nd20 <= 12 or nd20 == 16 or nd20 == 18 or down_prior == True:
                     # Down one level to a chamber
                     nlevel, check = self.check_level(-1)
                     up = False
