@@ -36,7 +36,8 @@ from IPython.display import display, Image as IPImage
 class AIMegaDungeon:
     _slots_ = ('levels', 'game')
     
-    def __init__(self, filename='Test', levelfile='levels.csv', keys='|', game='D&D 5E 2024', rel_year =  -670, rel_day = 180):
+    
+    def __init__(self, filename='Test', levelfile='levels.csv', keys='|', game='D&D 5E 2024', rel_year =  -670, rel_day = 180, bastion='Town of Halsford', dungeon='The Mines of Thorvaldin'):
         '''
       
 
@@ -59,22 +60,25 @@ class AIMegaDungeon:
         self.rel_year = rel_year
         self.rel_day = rel_day
         self.timers = []
+        self.bastion = bastion
+        self.levelsdf = pd.read_csv(self.file_path(levelfile), sep='\t')
+        self.levels = []
+        self.quests = []
+        self.current_room = None
+        self.dungeon_name = dungeon
         
         try:
-            self.levels = self.load(filename)
-      
-            self.levelsdf = pd.read_csv(self.file_path(levelfile), sep='\t')
-            new = 1
+            self.load(filename)
+            self.graph_dungeon()
         except: # need a new instance
             print('New Dungeon...')
-            self.levelsdf = pd.read_csv(self.file_path(levelfile), sep='\t')
-            self.levels = {}
             
-            with open(self.file_path('AppendixA.pickle'), 'rb') as file:   
-                self.AppendixA = pickle.load(file)
-            print('Dungeon {} Created'.format(filename))
+        with open(self.file_path('AppendixA.pickle'), 'rb') as file:   
+            self.AppendixA = pickle.load(file)
+        print('Dungeon {} Created'.format(filename))
             
         self.char_level_ave = 1
+    
 
     ## ADMIN FUNCTIONS
     def file_path(self, filename):
@@ -102,17 +106,61 @@ class AIMegaDungeon:
         self.levels = dct['levels'] 
         self.time = dct['time']
         self.reltime = dct['reltime']
-                  
+       
+    ## STRICT TIMEKEEPING
     def date(self):
         return datetime.fromtimestamp(self.time) + relativedelta(years=self.rel_year, days=self.rel_day)
     
+    def make_date(self, s):
+        return datetime.fromtimestamp(s) + relativedelta(years=self.rel_year, days=self.rel_day)
+    
+    def future_date(self, days):
+        return datetime.fromtimestamp(self.time) + relativedelta(years=self.rel_year, days=self.rel_day) + relativedelta(days=days)
+    
+    def get_day(self, date=None, output=''):
+        if date == None:
+            date = self.date()
+            
+        day = date.day              # e.g., 6
+        month = date.month          # e.g., 3
+        weekday = date.weekday()    # Monday is 0, Sunday is 6
+        isoweekday = date.isoweekday() # Monday is 1, Sunday is 7
+        
+        if output=='day':
+            return date.strftime("%A")
+        elif output == 'daynum':
+            ans = date.strftime("%d")
+        elif output == 'month':
+            ans = date.strftime("%B")
+        else:
+            ans = date.strftime("%A, %B %d.")
+            
+        #Allows fantasy renames to the calendar
+        try:
+            df = pd.read_csv(self.file_path('calendar.csv'))
+            for i, row in df.iterrows():
+                ans = ans.replace(row['real'],row['fantasy'])
+        except:
+            None
+        return ans
+        
     def timekeeping(self):
-        print(self.date())
+        print('{} [{}]'.format(self.get_day(self.date()), self.date()))
+        
+        # timers...
         [print('EXPIRED! {}'.format(timer[1])) for timer in self.timers if timer[0] <= self.time]
         [self.timers.remove(timer) for timer in self.timers if timer[0] < self.time]
         lst = [timer for timer in self.timers if timer[0] > self.time]
         lst = sorted(lst, key=lambda x:x[0])
         [print('{} Time Remaining {}s'.format(timer[1], timer[0] - self.time)) for timer in lst]
+        
+        # clear old quests
+        lst = sorted(self.quests, key=lambda x:x[0])
+        self.quests = [quest for quest in lst if quest[0] > self.time]
+        for quest in [quest for quest in lst if quest[0] <= self.time]:
+            if quest[-1] != '':
+                quest[-2].furnishings.append('General: The corpse of {}, recently slain'.format(captive_name))
+            quest[-2].quest = ''
               
     def add_timer(self, event, hours=0, s=0, days=0, mins=0, rnds=0, turns=0):
         hours = hours + 24*days
@@ -141,7 +189,178 @@ class AIMegaDungeon:
             ntimer = (s, timer[1])
             self.timers.append(ntimer)
         self.timekeeping()
+     
+    ## Quests
+    def get_quests(self):
+        '''
+        self.quests.append((s,quest_name,reward,rumor,prompt,room,captive_name))
+        '''
+         # clear old quests
+        lst = sorted(self.quests, key=lambda x:x[0])
+        self.quests = [quest for quest in lst if quest[0] > self.time]
+        for quest in [quest for quest in lst if quest[0] <= self.time]:
+            if quest[-1] != '':
+                quest[-2].furnishings.append('General: The corpse of {}, recently slain'.format(captive_name))
+            quest[-2].quest = ''
         
+        [print('{} [{} gold]: {}'.format(quest[1], quest[2], self.get_day(self.make_date(quest[0])))) for quest in self.quests]
+    
+    def make_quest(self):
+        '''
+        Creates a quest using Random Tables and AI
+
+        '''
+        try_again = True
+        while try_again == True:
+            # GOAL
+            goals = ['Stop the dungeon’s monstrous inhabitants from raiding the surface world.',
+                     'Foil a villain’s evil scheme.',
+                     'Destroy a magical threat inside the dungeon.',
+                     'Acquire treasure.',
+                     'Find a particular item for a specific purpose.',
+                     'Retrieve a stolen item hidden in the dungeon.',
+                     'Acquire treasure.',
+                     'Find a particular item for a specific purpose.',
+                     'Retrieve a stolen item hidden in the dungeon.',
+                     'Find information needed for a special purpose.',
+                     'Rescue a captive.',
+                     'Discover the fate of a previous adventuring party.',
+                     'Find an NPC who disappeared in the area.',
+                     'Slay a dragon or some other challenging monster.',
+                     'Discover the nature and origin of a strange location or phenomenon.',
+                     'Parley with a villain in the dungeon.']
+            goal = random.sample(goals,1)[0]
+            patrons = ['Retired adventurer',
+                       'Local ruler',
+                       'Military officer',
+                       'Temple official',
+                       'Sage',
+                       'Respected elder',
+                       'Desperate commoner',
+                       'Embattled merchant']
+            patron = random.sample(patrons,1)[0]
+            levels = []
+            for level in self.levelsdf['level']:
+                levels.extend([row['level'] for i, row in self.levelsdf.iterrows() if abs(row['level']) <= abs(level) and abs(level) <= len(self.quests)])
+            floor = random.sample(levels,1)[0]
+            reward = [0, 50, 100, 150, 250, 500, 600, 750, 900, 1100, 1200, 1600, 2000, 2200, 2500][random.randint(1,3)+abs(floor)]
+            monster = ''
+            monster_notes = ''
+            captive = ''
+            captive_name = ''
+            trick = ''
+            if 'phenomenon' in goal:
+                trick = 'phenomenon'
+            if 'NPC' in goal or 'captive' in goal:
+                patrons.extend(['Old friend',
+                                'Former teacher',
+                                'Parent or other family member',
+                                'Skilled adventurer',
+                                'Inexperienced adventurer',
+                                'Enthusiastic commoner',
+                                'Soldier',
+                                'Priest',
+                                'Sage',
+                                'Revenge seeker'
+                                'Raving lunatic'])
+                captive = random.sample(patrons,1)[0]
+                prompt = 'I need a name and brief description (gender, race) for a single {}. This is for dungeons and dragons.  Format should be Name (gnder, race, single detail)'.format(captive)
+                captive_name = self.get_chat_response(prompt)
+            if 'inhabitants' in goal or 'villain' in goal or 'captive' in goal:
+                monster = random.sample(self.levelsdf[self.levelsdf['level'] == floor]['Monster (dominant inhabitant)'].values[0].split(', '),1)[0]
+                if 'captive' in goal:
+                    
+                    monster_notes = ' [Who captured {}, a {} (of the {})]'.format(captive_name, captive, patron)
+                if 'raiding' in goal:
+                    monster_notes = ' [Who are plaining on raiding the {}]'.format(self.bastion)
+            elif captive != '':
+                goal = goal + ' [{}, a {} (of the {})]'.format(captive_name, captive, patron)
+            elif 'magical threat' in goal or 'dragon' in goal:
+                monster = random.sample(self.levelsdf[self.levelsdf['level'] == floor]['Monster (random creature)'].values[0].split(', '),1)[0]
+            treasure = ''
+            actual_treasure = ''
+            if 'item' in goal or 'treasure' in goal:
+                treasure = random.sample(['gem','art','Magic Item'],1)[0]
+            # find the room...
+            lst = [room for room in self.levels[floor].rooms if room.quest == '' and 
+                                                                room.description == '' and 
+                                                                'stair' not in room.purpose.lower() and 
+                                                                'exit' not in room.purpose.lower() and
+                                                                'Door trap' not in room.purpose]
+            if monster != '':
+                lst = [room for room in lst if monster.lower() in room.monster.lower()]
+            if treasure != '':
+                lst = [room for room in lst if treasure.lower() in room.treasure.lower()]
+            if trick != '':
+                lst = [room for room in lst if 'trick' in room.treasure.lower()]
+            try:
+                room = random.sample(lst,1)[0]
+                room.monster = room.monster + monster_notes
+                if trick != '':
+                    goal = goal + ' [{}]'.format(room.traps)
+                if treasure != '':
+                    tprompt = f"I need to specify the results of a SINGLE {treasure}s in {room.treasure}."
+                    tprompt = tprompt + f"ONLY REPORT THE ITEM [if a weapon or armor piece, also determine the type of weapon or armor]"
+                    tprompt = tprompt + f"Completley specify one {treasure} for quest development reasons, and just return the item and it's details"
+                    actual_treasure = self.get_chat_response(tprompt,role='Someone that is concise')
+                    room.treasure = room.treasure + ' where one of the {}s is already known to be a {}'.format(treasure, actual_treasure)
+            
+                days_to_complete = random.randint(1+abs(floor),3*(1+abs(floor)**2))
+                prompt = f"Write a quest hook, in the form of a rumor board listing, for an adventure where a {patron} from {self.bastion} offers {reward} gold "
+                prompt = prompt + f"for someone to enter {self.dungeon_name} in order to {goal}"
+                if room.monster != '':
+                    prompt = prompt + f"\n    Creatures Involved: {room.monster}"
+                if treasure != '':
+                    prompt = prompt + f"\n    Item/Treasure: {actual_treasure}"
+                prompt = prompt + f"\nProvide the details the quest giver would know, and any details below he could suspect"
+                prompt = prompt + f"\nFor details suspected, make sure they are listed in a logical way"
+                prompt = prompt + f"\nNote that this takes place in a dungeon, only include information the quest giver would know in a way that they would know it." 
+                prompt = prompt + f"\n    Goal is on Floor: {floor} [{self.levels[floor].info['purpose']}], room: {room.purpose}"
+                prompt = prompt + f"The deadline is {self.get_day(self.future_date(days_to_complete))}"
+                prompt = prompt + '''
+    The format should be as follows:
+
+    TITLE
+    REWARD
+
+    DETAILS
+
+    Where TITLE is a catchy title to grab an adventurer's attention, but must hold some detail as to the adventure (don't say lost heirloom, say Lost sword if the heirloom is a sword, etc.)
+    the REWARD is the gold offered (sometimes with 'and all other items found' and the like
+    especially when the quest is for an item), and details is where you have the quest giver's name and what little information they have to go on.  
+    Remember that the quest giver may not have all the information I have given you, and thus it wouldn't be in the listing.  Do not include floor numbers.
+    Note floors start at 0, and tend to go down in negative numbers (0 not lowest)
+                '''
+                try_again = False
+            except ValueError:
+                try_again=True
+        rumor = self.get_chat_response(prompt, role='You are a talented fantasy author making a handout for a TTRPG')
+        room.quest = rumor
+        if 'NPC' in goal:
+            room.monster = room.monster + '{} [a {} (of the {})]'.format(captive_name, captive, patron)
+        quest_name = rumor.split('\n')[0]
+
+        s = self.time + 24*3600*days_to_complete
+        self.quests.append((s,quest_name,reward,rumor,prompt,room,captive_name))
+        
+    def get_quest(self, title, dm=False):
+        lst = [quest for quest in self.quests if title.lower() in quest[1].lower()]
+        if len(lst) == 1:
+            print(lst[0][3])
+            if dm == True:
+                return lst[0]
+        else:
+            lst = [quest[1] for quest in lst]
+            print('Which one? {}'.format(', '.join(lst)))
+               
+    def take_quest(self, title):
+        lst = [quest for quest in self.quests if title.lower() in quest[1].lower()]
+        if len(lst) == 1:
+            self.timers.append((lst[0][0], lst[0][1]))
+        else:
+            lst = [quest[1] for quest in lst]
+            print('Which one? {}'.format(', '.join(lst)))
+    
     ## Dungeon Functions
     def make_dungeon(self, rooms=35, start=False, finish=False):
         """
@@ -192,9 +411,11 @@ class AIMegaDungeon:
             for lvl, row in self.levelsdf.iterrows():
                 dungeon = self.levels[row['level']]
                 [dungeon.remove_door(door) for door in dungeon.get_free_doors()]
+        self.G = nx.Graph()
+        self.graph_dungeon()
         return min_level, max_level
 
-    def graph_dungeon(self):
+    def graph_dungeon(self, secrets=True, monsters=True):
         '''
         Creates a NetworkX graph of the dungeon, where doors and rooms are nodes
         this allows calculation of quickest paths and allows the next door in quickest path
@@ -212,11 +433,12 @@ class AIMegaDungeon:
                     rm_type = 'stair'
                 elif room.is_exit == True:
                     rm_type = 'exit'
-                self.G.add_node(room
-                        , type=rm_type
-                        , label='{}'.format(' '.join(room.purpose.split(' ')[0])))
-                [self.G.add_edge(room, door) for door in room.doors]
-                [self.G.add_node(door, type='door',label=door.door_type.split(' ')[0].replace(',','')) for door in room.doors]
+                if monsters == True or room.monster == '':
+                    self.G.add_node(room
+                            , type=rm_type
+                            , label='{}'.format(' '.join(room.purpose.split(' ')[0])))
+                    [self.G.add_edge(room, door) for door in room.doors if secrets == True or 'secret' not in door.door_type.lower()]
+                    [self.G.add_node(door, type='door',label=door.door_type.split(' ')[0].replace(',','')) for door in room.doors if secrets == True or 'secret' not in door.door_type.lower()]
 
     def get_dungeon_floorplans(self, show=True, levels=None):
         '''
@@ -410,8 +632,24 @@ class AIMegaDungeon:
             room_desc_basic = room_desc_basic + f"\nFloors: {room.parent.info['floors']}"
             room_desc_basic = room_desc_basic + f"\nCeiling: {room.parent.info['ceilings']}"
             room_desc_basic = room_desc_basic + f"\nWall: {room.parent.info['walls']}"
-            room.description = room_desc_basic                                       
-        return room.description   
+            room.description = room_desc_basic
+
+            # Quest Completion
+            if room.quest !='':
+                room.old_description = room.description
+                prompt = '''Incorporate the following quest into the description below.  This room is where the objective of this quest is to be found.
+                -include any information that is left unkown, such as information, items, etc.
+                -if an item is needed but not in the furnishings, describe how it is hidden.
+                -Leave the description as close to intact as possible but inlcude the necessary information (edit, don't reformat/rewrite)
+                -the quest is written down elsewhere, it does not need to be included in the description.
+                
+                Quest: {}
+                
+                Description: {}
+                
+                Do not extend the quest into any other rooms.  Everything involved is in thiis room
+                Keep all parts of the description!  Just edit the description so the quest is taken into account.'''.format(room.quest, room.description)
+                room.description = self.get_chat_response(prompt, role='You are an editor for a {} book'.format(self.game)) 
     
     def random_encounter(self, room, party_is='Exploring'):
         '''
@@ -476,15 +714,72 @@ class AIMegaDungeon:
                 room.monster = '[Rolled] ' + ', '.join([a for a in [room.monster,monster] if a != '']) +'\n\n' + encounter
         return encounter 
   
+    def track(self, target):
+        '''
+        If you succeed at a tracking check, this lets you know if there are tracks here
+        and where they lead.
+        '''
+        self.graph_dungeon()
+        lst = []
+        for i in self.levels.keys():
+            level = self.levels[i]
+            lst.extend([room for room in level.rooms if target.lower() in room.monster.lower() or 
+                                                        target.lower() in room.description or 
+                                                        target.lower() in room.quest.lower()])
+        if len(lst) > 1:
+            check = [len(nx.shortest_path(self.G, source=self.current_room, target=room)) for room in lst]
+            room = lst[check.index(min(check))]
+        else:
+            room = lst[0]
+        # what entrance did they take?
+        lst = []
+        for i in self.levels.keys():
+            level = self.levels[i]
+            lst.extend([room for room in level.rooms if room.is_exit])
+        check = [len(nx.shortest_path(self.G, source=room, target=eroom)) for eroom in lst]
+        entrance = lst[check.index(min(check))]
+        path = nx.shortest_path(self.G, source=entrance, target=room)
+        if self.current_room in path:
+            door = path[path.index(self.current_room)+1]
+            if type(door) == Door:
+                doortype = door.door_type.split(' ')[0].replace(',','')
+                if 'portcullis' not in doortype:
+                    doortype = '{} door'.format(doortype) 
+                compass = direction_to_compass(door.borders[door.rooms.index(self.current_room)].direction)
+                if 'secret' not in door.door_type.lower():
+                    print(f"The tracks lead to the {doortype} to the {compass}")
+                else:
+                    print(f"The tracks lead into the {compass} wall")
+            else:
+                print(f"The tracks lead into the {self.current_room.purpose}")
+        else:
+            print(f"You don't see any tracks or footprints here")
+    
     ## AI CALLS & TOOLS
-    def get_chat_response(self, prompt, role="You are a helpful assistant.", model="gpt-3.5-turbo"):
-        client = openai.OpenAI(api_key=self.OPENAI_API_KEY) # Create an OpenAI client instance
+    def get_chat_response(self, prompt, role="You are a helpful assistant.", model="google/gemini-2.0-flash-001"):
+        # Create the client pointing to OpenRouter
+        
+        prompt = prompt + '''
+        
+        Constraint: Do not acknowledge this request. Do not provide introductions, conclusions, or multiple options unless 
+        specifically asked. Provide only the raw text of the quest board listing. Start your response immediately with the content.'''
+        
+        client = openai.OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=self.OPENROUTER_API_KEY, 
+        )
+        
         response = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": role},
                 {"role": "user", "content": prompt}
-            ]
+            ],
+            # OpenRouter-specific headers (Optional but recommended)
+            extra_headers={
+                "HTTP-Referer": "https://your-site-url.com", # Optional
+                "X-Title": "AI Mega Dungeon", # Optional
+            }
         )
         return response.choices[0].message.content
          
@@ -1421,7 +1716,7 @@ class Room():
     '''
     A collection of blocks...
     '''
-    __slots__ = ('room_id', 'blocks', 'color', 'doors', 'is_exit', 'purpose', 'state', 'contents', 'parent', 'monster', 'treasure', 'furnishings', 'traps', 'hazards', 'hallway', 'stairs', 'description')
+    __slots__ = ('room_id', 'blocks', 'color', 'doors', 'is_exit', 'purpose', 'state', 'contents', 'parent', 'monster', 'treasure', 'furnishings', 'traps', 'hazards', 'hallway', 'stairs', 'description', 'quest', 'old_description')
 
     def __init__(self, parent, position=Position(0,0), hallway=False, stairs=None, is_exit=False):      
         self.blocks = [Block(position)]
@@ -1442,6 +1737,8 @@ class Room():
         self.hazards = ''
         self.stock_room(hallway)
         self.description = ''
+        self.quest = ''
+        self.old_description = ''
         
     def block_positions(self):
         return {block.position for block in self.blocks}
@@ -1789,6 +2086,7 @@ class Room():
     def stock_room(self, hallway=False):
         '''
         '''
+        CR = random.randint(1,3)+abs(int((self.parent.info['level'])))
         # Purpose, it's that little flame...
         if self.hallway:
             self.purpose = 'Hallway'
@@ -1834,7 +2132,7 @@ class Room():
                 self.furnishings.append('General Features: {}'.format(tobj))
                 
             if 'treasure' in self.contents:
-                CR = 3+2*abs(int((self.parent.info['level'])))
+                
                 if 'incidental' in self.contents:
                     hoard = False
                 else:
