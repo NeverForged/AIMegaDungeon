@@ -1,0 +1,14 @@
+# Ignore all .aad files
+*.aad
+*.env
+*.ipynb
+
+# Ignore the 'build' directory and everything inside it
+Rooms/
+
+# Ignore a specific file
+# config.local.json
+
+# Ignore all files in the 'temp' directory except important.txt
+# /temp/*
+# !/temp/important.txt
