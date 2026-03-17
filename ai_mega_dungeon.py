@@ -1,9 +1,11 @@
 import os
 import io
 import cv2
+import sys
 import json
 import enum
 import time
+import dill
 import heapq
 import shutil
 import pickle
@@ -12,6 +14,7 @@ import openai
 import random
 import requests
 import warnings
+import jsonpickle
 import collections
 import numpy as np
 import pandas as pd
@@ -26,18 +29,20 @@ import matplotlib.path as mpath
 import matplotlib.patches as patches
 from matplotlib.patches import Polygon
 from dateutil.relativedelta import relativedelta
+from IPython.display import display, Image as IPImage
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
-
-
-
-from IPython.display import display, Image as IPImage
-
 class AIMegaDungeon:
-    _slots_ = ('levels', 'game')
-    
-    
-    def __init__(self, filename='Test', levelfile='levels.csv', keys='|', game='D&D 5E 2024', rel_year =  -670, rel_day = 180, bastion='Town of Halsford', dungeon='The Mines of Thorvaldin'):
+      
+    def __init__(self, 
+                 filename='Test', 
+                 levelfile='levels.csv', 
+                 keys='|', 
+                 game='D&D 5E 2024', 
+                 rel_year =  -670, 
+                 rel_day = 180, 
+                 bastion='Town of Halsford', 
+                 dungeon='The Mines of Thorvaldin'):
         '''
       
 
@@ -49,11 +54,13 @@ class AIMegaDungeon:
         
         keys = OPENAI API KEY|OPENROUTER API KEY
         '''
-        self.OPENAI_API_KEY = keys.split('|')[0]
-        self.OPENROUTER_API_KEY = keys.split('|')[1]
+        self.filename = filename
+        
+       
+            
+        
         # Get the directory of the class
-        self.current_dir = os.path.dirname(os.path.abspath(__file__))
-        self.filename = filename  
+        self.current_dir = os.path.dirname(os.path.abspath(__file__)) 
         self.game = game
         self.G = nx.Graph()
         self.time = 0  #in seconds...
@@ -61,52 +68,65 @@ class AIMegaDungeon:
         self.rel_day = rel_day
         self.timers = []
         self.bastion = bastion
-        self.levelsdf = pd.read_csv(self.file_path(levelfile), sep='\t')
-        self.levels = []
+        self.levels = {}
         self.quests = []
         self.current_room = None
         self.dungeon_name = dungeon
-        
+        self.levelsdf = pd.read_csv(self.file_path(levelfile), sep='\t')
         try:
             self.load(filename)
-            self.graph_dungeon()
-        except: # need a new instance
+        except:
             print('New Dungeon...')
-            
+        self.OPENAI_API_KEY = keys.split('|')[0]
+        self.OPENROUTER_API_KEY = keys.split('|')[1]
         with open(self.file_path('AppendixA.pickle'), 'rb') as file:   
             self.AppendixA = pickle.load(file)
         print('Dungeon {} Created'.format(filename))
             
         self.char_level_ave = 1
     
-
+    def __getstate__(self):
+        # Capture everything
+        return self.__dict__.copy()
+        
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # Manually restore the child's reference to this parent instance
+        for lvl in self.levels.keys():
+            self.levels[lvl].parent = self
+        
     ## ADMIN FUNCTIONS
     def file_path(self, filename):
         return os.path.join(self.current_dir, '{}'.format(filename))
            
     def save(self, filename='QuickSave'):
         '''
+        
         Save bookeeping functions and the dungeon
         '''
-        
-        dct['levels'] = self.levels
-        dct['time'] =self. time
-        dct['reltime'] = self.reltime
-        with open(filename+'.aad', 'wb') as file:
-            pickle.dump(dct, file)  
+        sys.setrecursionlimit(50000)
+        self.filename = filename
+        #frozen = jsonpickle.encode(self, keys=True)
+        with open(self.file_path(filename+'.aad'), 'wb') as file:
+            temp = (self.OPENAI_API_KEY , self.OPENROUTER_API_KEY)
+            del self.OPENAI_API_KEY   
+            del self.OPENROUTER_API_KEY
+            dill.dump(self, file, protocol=dill.HIGHEST_PROTOCOL)  
+            self.OPENAI_API_KEY , self.OPENROUTER_API_KEY = temp
               
     def load(self, filename=None):
         '''
         Load bookeepiung functions
         '''
+        sys.setrecursionlimit(50000)
+        # If no filename is provided, fall back to the instance's default
+        if filename is None:
+            filename = self.filename
+        with open(self.file_path(filename+'.aad'), 'rb') as file:
+            loaded_dungeon= dill.load(file)
+        self.__dict__.update(loaded_dungeon.__dict__)
+        print('depickled and attributes updated...')
 
-        with open(filename+'.aad', 'rb') as file:    
-                dct = pickle.load(file)
-                
-        self.levels = dct['levels'] 
-        self.time = dct['time']
-        self.reltime = dct['reltime']
-       
     ## STRICT TIMEKEEPING
     def date(self):
         return datetime.fromtimestamp(self.time) + relativedelta(years=self.rel_year, days=self.rel_day)
@@ -145,22 +165,26 @@ class AIMegaDungeon:
         return ans
         
     def timekeeping(self):
-        print('{} [{}]'.format(self.get_day(self.date()), self.date()))
+        ret_lst = []
+        ret_lst.append('{} [{}]'.format(self.get_day(self.date()), self.date()))
         
         # timers...
-        [print('EXPIRED! {}'.format(timer[1])) for timer in self.timers if timer[0] <= self.time]
+        ret_lst.extend(['EXPIRED! {}'.format(timer[1]) for timer in self.timers if timer[0] <= self.time])
         [self.timers.remove(timer) for timer in self.timers if timer[0] < self.time]
         lst = [timer for timer in self.timers if timer[0] > self.time]
         lst = sorted(lst, key=lambda x:x[0])
-        [print('{} Time Remaining {}s'.format(timer[1], timer[0] - self.time)) for timer in lst]
+        ret_lst.extend(['{} Time Remaining {}s'.format(timer[1], timer[0] - self.time) for timer in lst])
         
         # clear old quests
         lst = sorted(self.quests, key=lambda x:x[0])
         self.quests = [quest for quest in lst if quest[0] > self.time]
         for quest in [quest for quest in lst if quest[0] <= self.time]:
             if quest[-1] != '':
-                quest[-2].furnishings.append('General: The corpse of {}, recently slain'.format(captive_name))
-            quest[-2].quest = ''
+                room = quest[-2]
+                room.furnishings.append('General: The corpse of {}, recently slain'.format(room.captive_name))
+                room.quest = ''
+            
+        return ret_lst
               
     def add_timer(self, event, hours=0, s=0, days=0, mins=0, rnds=0, turns=0):
         hours = hours + 24*days
@@ -172,7 +196,7 @@ class AIMegaDungeon:
         hours = hours + 24*days
         mins = mins + 10*turns + 60*hours
         self.time = self.time + s + 60*mins + 6*rnds
-        self.timekeeping()
+        return self.timekeeping()
         
     def extend_timer(self, event, hours=0, s=0, days=0, mins=0, rnds=0, turns=0):
         lst = [timer for timer in self.timers if event.lower() in timer[1].lower()]
@@ -203,7 +227,7 @@ class AIMegaDungeon:
                 quest[-2].furnishings.append('General: The corpse of {}, recently slain'.format(captive_name))
             quest[-2].quest = ''
         
-        [print('{} [{} gold]: {}'.format(quest[1], quest[2], self.get_day(self.make_date(quest[0])))) for quest in self.quests]
+        return ['{} [{} gold]'.format(quest[1], quest[2]) for quest in self.quests]
     
     def make_quest(self):
         '''
@@ -267,7 +291,7 @@ class AIMegaDungeon:
                 prompt = 'I need a name and brief description (gender, race) for a single {}. This is for dungeons and dragons.  Format should be Name (gnder, race, single detail)'.format(captive)
                 captive_name = self.get_chat_response(prompt)
             if 'inhabitants' in goal or 'villain' in goal or 'captive' in goal:
-                monster = random.sample(self.levelsdf[self.levelsdf['level'] == floor]['Monster (dominant inhabitant)'].values[0].split(', '),1)[0]
+                monster = random.sample(self.levelsdf[self.levelsdf['level'] == floor]['Monster (dominant inhabitant)'].values[0].split('|'),1)[0]
                 if 'captive' in goal:
                     
                     monster_notes = ' [Who captured {}, a {} (of the {})]'.format(captive_name, captive, patron)
@@ -275,8 +299,9 @@ class AIMegaDungeon:
                     monster_notes = ' [Who are plaining on raiding the {}]'.format(self.bastion)
             elif captive != '':
                 goal = goal + ' [{}, a {} (of the {})]'.format(captive_name, captive, patron)
+                
             elif 'magical threat' in goal or 'dragon' in goal:
-                monster = random.sample(self.levelsdf[self.levelsdf['level'] == floor]['Monster (random creature)'].values[0].split(', '),1)[0]
+                monster = random.sample(self.levelsdf[self.levelsdf['level'] == floor]['Monster (random creature)'].values[0].split('|'),1)[0]
             treasure = ''
             actual_treasure = ''
             if 'item' in goal or 'treasure' in goal:
@@ -295,6 +320,7 @@ class AIMegaDungeon:
                 lst = [room for room in lst if 'trick' in room.treasure.lower()]
             try:
                 room = random.sample(lst,1)[0]
+                room.captive_name = captive_name
                 room.monster = room.monster + monster_notes
                 if trick != '':
                     goal = goal + ' [{}]'.format(room.traps)
@@ -415,12 +441,21 @@ class AIMegaDungeon:
         self.graph_dungeon()
         return min_level, max_level
 
-    def graph_dungeon(self, secrets=True, monsters=True):
+    def graph_dungeon(self, secrets=True, monsters=True, traps=True):
         '''
         Creates a NetworkX graph of the dungeon, where doors and rooms are nodes
         this allows calculation of quickest paths and allows the next door in quickest path
         to be found.
         '''
+        secweight = 0
+        monweight = 0
+        trapweight = 0
+        if secrets == False:
+            secweight = 5
+        if monsters == False:
+            monweight = 5
+        if traps == False:
+            trapweight = 5
         # Add to graph
         self.G = nx.Graph()
         # We rebuild the graph each time in case doors are cut off
@@ -428,18 +463,26 @@ class AIMegaDungeon:
             # add to Graph...
             for room in self.levels[row['level']].rooms:
                 rm_type = 'room'
+                weight = 1
                 if room.stairs != None:
-                    self.G.add_edge(room, room.stairs)
+                    self.G.add_edge(room, room.stairs, weight=1)
                     rm_type = 'stair'
                 elif room.is_exit == True:
                     rm_type = 'exit'
-                if monsters == True or room.monster == '':
-                    self.G.add_node(room
+                self.G.add_node(room
                             , type=rm_type
                             , label='{}'.format(' '.join(room.purpose.split(' ')[0])))
-                    [self.G.add_edge(room, door) for door in room.doors if secrets == True or 'secret' not in door.door_type.lower()]
-                    [self.G.add_node(door, type='door',label=door.door_type.split(' ')[0].replace(',','')) for door in room.doors if secrets == True or 'secret' not in door.door_type.lower()]
-
+                if room.monster != '':  #room has monsters...
+                    weight = weight + monweight
+                for door in room.doors:
+                    nweight = weight
+                    if 'secret' in door.door_type.lower():  # hide secret doors that arn't needed...
+                        nweight = nweight+secweight
+                    if door.trapped == True:  # hide traps that arn't needed...
+                        nweight = nweight+trapweight
+                    self.G.add_edge(room, door, weight=nweight)
+                    self.G.add_node(door, type='door',label=door.door_type.split(' ')[0].replace(',',''))
+                    
     def get_dungeon_floorplans(self, show=True, levels=None):
         '''
         Creates floor graphs of the dungeon.  
@@ -630,7 +673,8 @@ class AIMegaDungeon:
             for furnishing in room.furnishings:
                 room_desc_basic = room_desc_basic + '\n{}'.format(furnishing)
             room_desc_basic = room_desc_basic + f"\nFloors: {room.parent.info['floors']}"
-            room_desc_basic = room_desc_basic + f"\nCeiling: {room.parent.info['ceilings']}"
+            room_desc_basic = room_desc_basic + f"\nCeiling [{room.ceiling_height}]: {room.parent.info['ceilings']}"
+            
             room_desc_basic = room_desc_basic + f"\nWall: {room.parent.info['walls']}"
             room.description = room_desc_basic
 
@@ -672,15 +716,15 @@ class AIMegaDungeon:
                 if sum(self.levelsdf['level']==level+1) == 1:
                     level = level +1
             elif (n2d6 >= 3 and n2d6 <= 4) or (n2d6 >= 10 and n2d6 <= 11):
-                lst  = self.levelsdf[self.levelsdf['level']==level]['Monster (random creature)'].values[0].split(', ')
+                lst  = self.levelsdf[self.levelsdf['level']==level]['Monster (random creature)'].values[0].split('|')
                 monster = lst[random.randint(0,len(lst)-1)]
                 monster = '{} [Monster Motivation: {}]'.format(monster, self.roll_table(self.AppendixA['Monster Motivation']))
             elif (n2d6 >=5 and n2d6 <= 6) or (n2d6 >= 8 and n2d6 <= 9):
-                lst  = self.levelsdf[self.levelsdf['level']==level]['Monster (pet or allied creature)'].values[0].split(', ')
+                lst  = self.levelsdf[self.levelsdf['level']==level]['Monster (pet or allied creature)'].values[0].split('|')
                 monster = lst[random.randint(0,len(lst)-1)]
                 monster = '{} [Monster Motivation: {}]'.format(monster, self.roll_table(self.AppendixA['Monster Motivation']))        
             elif (n2d6 == 7):
-                lst  = self.levelsdf[self.levelsdf['level']==level]['Monster (dominant inhabitant)'].values[0].split(', ')
+                lst  = self.levelsdf[self.levelsdf['level']==level]['Monster (dominant inhabitant)'].values[0].split('|')
                 monster = lst[random.randint(0,len(lst)-1)]
                 monster = '{} [Monster Motivation: {}]'.format(monster, self.roll_table(self.AppendixA['Monster Motivation']))
             elif (n2d6 == 12):
@@ -755,6 +799,69 @@ class AIMegaDungeon:
         else:
             print(f"You don't see any tracks or footprints here")
     
+    def explore(self,room=None,exit_id=None, exit_level=None):
+        # first, we need the room we're in...
+        if room == None:
+            if exit_id == None:
+                self.current_room = self.levels[0].rooms[0]
+                room = self.current_room
+            else:
+                if exit_level == None:
+                    exit_level = 0
+                rooms = [room for room in self.levels[exit_level].rooms if room.room_id == exit_id]
+                try:
+                    room = rooms[0]
+                except:
+                    room = self.levels[0].rooms[0]
+                self.current_room = room
+        
+        # lets do this...
+        if room != None and room.is_exit == False:
+            if room.description == '':
+                self.make_description(room)
+        output_image_path = self.file_path("Rooms/{} Level {} Room {}.png".format(self.filename,
+                                                                                      room.parent.info['level'],
+                                                                                      room.room_id))
+        if len(room.blocks) >= 2:
+            try:
+                display(IPImage(filename=output_image_path))
+            except:
+                self.draw_room(room)
+                self.render_room(room, show=True)
+
+        lst = []
+        dct = {}
+        for door in room.doors:
+            direction = direction_to_compass(get_door_border(room, door).direction)
+            name = door.door_type.split(' ')[0].replace(',','')
+            key = '{}-{}'.format(direction,name)
+            if 'secret' not in key.lower():
+                lst.append(key)
+            dct[key] = door
+        room.door_dct = dct
+        if room.is_exit == True:
+            lst.append('This is an exit, exit_id = Level = {}; Room-ID = {}'.format(room.parent.info['level'],room.room_id))
+        return room, lst
+
+    def open_door(self, door_key, unlocked=False):
+        if door_key not in self.current_room.door_dct:
+            return 'You need to specify a real door'
+        else:
+            door = self.current_room.door_dct[door_key]
+            if 'locked' in door.door_type or 'barred' in door.door_type:
+                if unlocked==True:
+                    door.door_type = door.door_type.split(',')[0]
+            reply = door.door_type
+            if 'portcullis' not in reply:
+                reply = reply + " door"
+            if door.trapped == True and ',' not in door.door_type:
+                reply = reply + '\n\n{}'.format(door.traps)
+            if 'locked' not in door.door_type and 'barred' not in door.door_type:
+                new_room = [room for room in door.rooms if room != self.current_room]
+                self.current_room = new_room[0]
+                reply = reply + '\n    ...opened'
+        return reply
+           
     ## AI CALLS & TOOLS
     def get_chat_response(self, prompt, role="You are a helpful assistant.", model="google/gemini-2.0-flash-001"):
         # Create the client pointing to OpenRouter
@@ -786,8 +893,7 @@ class AIMegaDungeon:
     def draw_room(self, room, show=True):
         '''
         Creates a mask and base image for AI to draw the room from
-        '''
-        
+        ''' 
         inner_radius = 0.25  #in case of stairs
         Diagonals = make_diagonals(room)
         fakeroom = make_fakeroom(room)
@@ -801,8 +907,7 @@ class AIMegaDungeon:
         # mask the area white...
         plt.fill(*zip(*make_contour(wallborders)), '#ffffff', alpha=1)
         #plt.fill(*zip(*make_contour(borders)), '#ffffff')
-        #plt.fill(*zip(*make_contour(borders)), 'g', alpha=0.5)
-
+        #plt.fill(*zip(*make_contour(borders)), 'g', alpha=0.5
        
         # draw the walls...
         inner_wall_border_line = []
@@ -817,7 +922,6 @@ class AIMegaDungeon:
         for border in wallborders:
              inner_wall_border_line.append(plt.plot(*zip(*border), color='k', linewidth=25, alpha=1.0))
 
-        
         for coords in Diagonals:
             x = [coord[0] for coord in coords]
             y = [coord[1] for coord in coords]
@@ -830,8 +934,7 @@ class AIMegaDungeon:
                                             color='black', linewidth=2, zorder=10))
             inner_wall_border_line.append(ax.plot([x_lims[0], x_lims[1]], [y_lims[0], y_lims[1]], 
                                             color='black', linewidth=2, zorder=10))
-            
-                
+             
         # add gridlines
         for border in room.grid_borders():
             plt.plot(*zip(*border), color='k', linewidth=1, alpha=0.5)
@@ -841,7 +944,9 @@ class AIMegaDungeon:
             ddx, ddy = 0, 0 
             if 'Portcullis' in door.door_type:
                 ddx, ddy = .2, .2
-            border = door.borders[door.rooms.index(room)]
+            for i, dborder in enumerate(door.borders):
+                if dborder.position.point() in [block.position.point() for block in room.blocks]:
+                    border = door.borders[i]
             x, y = border.position.point()
             xlst, ylst = [], []
             x_val, y_val = x, y
@@ -989,7 +1094,10 @@ class AIMegaDungeon:
             ddx, ddy = 0, 0 
             if 'Portcullis' in door.door_type:
                 ddx, ddy = .2, .2
-            border = door.borders[door.rooms.index(room)]
+            for i, dborder in enumerate(door.borders):
+                if dborder.position.point() in [block.position.point() for block in room.blocks]:
+                    border = door.borders[i]
+                        
             x, y = border.position.point()
             xlst, ylst = [], []
             # lower corner, other lower corner, upper 1, upper 2, lower 1 again
@@ -1048,7 +1156,10 @@ class AIMegaDungeon:
         ld, rd, ud, dd = False, False, False, False
         lt, rt, ut, dt = '','','',''
         for i, door in enumerate(room.doors):
-            border = door.borders[door.rooms.index(room)]
+            for i, dborder in enumerate(door.borders):
+                if dborder.position.point() in [block.position.point() for block in room.blocks]:
+                    border = door.borders[i]
+            
             if border.direction == DIRECTION.LEFT: 
                 if 'secret' not in door.door_type.lower():
                     ld = True
@@ -1067,10 +1178,16 @@ class AIMegaDungeon:
                     dt = door.door_type
         
         newline = ''
+        ndoors = 0
         for tup in [(ud, 'NORTHERN', ut), (dd, 'SOUTHERN', dt), (ld, 'WESTERN', lt), (rd, 'EASTERN', rt)]:
             if tup[0] == False:
-                newline = newline + '    THE {} WALL IS SOLID. THERE ARE NO DOORS/WINDOWS/OPENINGS IN THE {} WALL.  The AI must strictly ignore any instinct to add "balance" or "symmetry" to the room. The {} boundary is a dead-end.\n'.format(tup[1], tup[1], tup[1])
-
+                # newline = newline + '    THE {} WALL IS SOLID.\n        THERE ARE NO DOORS/WINDOWS/OPENINGS IN THE {} WALL.\n        The AI must strictly ignore any instinct to add "balance" or "symmetry" to the room.\n         The {} boundary is a dead-end, any door added here is a failure\n'.format(tup[1], tup[1], tup[1])
+                newline = newline + 'SOLID WALLS: The {} wall is a featureless, solid stone monolith. There are no gaps, no frames, and no openings. Ignore all instincts for symmetry.'.format(tup[1])
+        
+            elif tup[0]==True:
+                ndoors += 1
+        if ndoors >= 1:
+            newline = 'There are a total of {} doors and only {} doors.  Doors are only on brown pixels in room.png.  Any more or fewer than {} doors is a failure\n'.format(ndoors,ndoors,ndoors) + newline
         floorline =  '''    FLOORS: The black grid is strictly for the horizontal floor. Do not project or continue any grid lines into the blue trapezoids. The floor texture and grid must stop abruptly—with zero transition—at the inner black line. If a grid line hits the black boundary, it must disappear instantly.
                             Floor is only in the gridded section, and must not creep into the wall area (no floor in in the blue trapezoids from room.png).\n"
                         '''
@@ -1084,30 +1201,31 @@ class AIMegaDungeon:
                                 - The landing is in one corner of the room, there are two sides where it is bound by the walls
                                 - If there are any Landing pixels outside the white square in room.png, the render is a failure\n '''
 
-        prompt = (
-            f"IMAGE EDITING TASK: Cinematic Schematic Render.\n\n"
+        prompt = ( 
+            f"IMAGE **EDITING** TASK: Cinematic Schematic Render.\n\n"
             f"STRICT MASK RULE: Use MASK.png as a physical stencil. \n"
-            f"SAFETY OVERRIDE: The black pixels in MASK.png are a hard boundary." # If a pixel is black in the mask, do not render any light, shadow, or texture there. Keep it pure black."
-            f"    The thick black lines are the 'clipping edge.' If a pixel is outside that central area, it MUST be the vertical wall material, never the floor material."
+            f"SAFETY OVERRIDE: The black pixels in MASK.png are a hard boundary.\n" # If a pixel is black in the mask, do not render any light, shadow, or texture there. Keep it pure black."
+            f"    The thick black lines are the 'clipping edge.' If a pixel is outside that central area, it MUST be the vertical wall material, never the floor material.\n"
             #f"- BLACK pixels in MASK.png are FROZEN. Do not change them.\n"
             # f"- WHITE pixels in MASK.png are the ONLY editable zones. \n\n"
+            f"PIXEL LOGIC (THE LEGEND):\n Interpret the colors in room.png with absolute mathematical priority:\n   BROWN POLYGON: This is the ONLY location for a door. If you see Brown, render a door. \n   BLUE AREA: This is SOLID WALLS. No exceptions. No openings.\n   RED LABELS: These are coordinates for door types. Delete the text after reading.\n"
             f"1. ARCHITECTURE: The blue trapezoids are VERTICAL WALLS that act as a 3D cookie-cutter. They physically overlap and HIDE the floor. There is no grid on the walls. The floor does not 'meet' the wall; it is simply cut off by the wall. Do not render any bevel, shadow-line, or ledge where the floor hits the blue area\n."
             f"    ARCHITECTURE: The BLUE trapezoids represent SOLID, IMPENETRABLE WALLS. If a wall does not have a brown door polygon, it is a single, continuous, and unbroken wall.\n"
             #f"2. MOOD & STYLE: {room.purpose} ({room.state})  Use Even neutral lighting (No directional shadows separating objects) and realistic textures.\n"
             f"2. MOOD & STYLE: {room.purpose} ({room.state})  Use cinematic lighting and realistic textures.\n"
-            f"{floorline}"
-            f"        Texture: {room.parent.info['floors']}."  
+            f"{floorline}\n"
+            f"        Texture: {room.parent.info['floors']}.\n"  
             f"         -Treat the black boundary line as a physical barrier. THIS Texture must be 'clipped' by the wall mask. Do not anti-alias or blend this area into the wall.\n"
             f"    WALLS (BLUE in ROOM.png): Vertical inner wall faces\n"
             f"        Texture: {room.parent.info['walls']}. Thicker black line is top of wall.\n"
-            f"        These are physically separate from the floor. Even if the textures are identical, the wall grain must be vertical and the floor grain must be horizontal. The wall texture MUST NOT touch the floor grid."
+            f"        These are physically separate from the floor. Even if the textures are identical, the wall grain must be vertical and the floor grain must be horizontal. The wall texture MUST NOT touch the floor grid.\n"
             f"    Walls should start at the black line around the gridded section.\n"
             f"3. DOOR ANCHORS: ONLY render doors where you see a BROWN POLYGON and a RED LABEL. If an area is BLUE, it is a SOLID WALL\n"
-            f"    Render a closed medieval door made of the labeled material exactly inside those gaps. If a wall is solid black in the mask, it is a PERMANENT wall.\n"
+            f"    Render a closed medieval door made of the labeled material exactly inside the brown gaps. If a wall is solid blue in the mask, it is a PERMANENT wall.\n"
             f"    The Brown trapezoids are gaps in the walls filled with a door.  Doors must be INSIDE the walls like real doors\n"
             f"    Remove the red labels\n"
-            f"{newline}"
-            f"    Do not add 'cinematic' door frames or gaps where they are not drawn in room.png."
+            f"{newline}\n"
+            f"    Do not add 'cinematic' door frames or gaps where they are not drawn in room.png.\n"
             f"4. DETAILS: {furnishing_list} \n"
             f"   - MANDATORY SIZE: Scale items accordingly to one grid square being 5ft.\n"
             f"   - VIEW: Strict 90-degree TOP-DOWN. Objects must look like flat floor-details, not 3D models.\n"
@@ -1116,12 +1234,14 @@ class AIMegaDungeon:
             f"   USE REALISTIC TEXTURES\n"
             f" DO NOT DRAW BLACK LINES FROM mask.png on the final image, especially wall corner lines\n"
             f"      only lines from room.png are to be reprooduced on final image\n"
-            f"    Do not draw door labels on the map"
+            f"    Do not draw door labels on the map\n\n"
+            f"  Look at the provided image room.png. ONLY render doors on the BROWN pixels. If a pixel is BLUE, it is a solid wall with no gaps.  If a pixel is white, it is a floor."
             f"OUTPUT: ONLY the base64 data URI. No text."
         )
         
         # save the prompt for debugging
         room.image_prompt = prompt
+        
         
         # API REQUEST
         payload = {
@@ -1189,7 +1309,6 @@ class DIRECTION(enum.Enum):
     RIGHT = 2
     UP = 3
     DOWN = 4
-
 
 #######
 # Utils
@@ -1467,19 +1586,50 @@ def border_wall(border):
     elif border.direction == DIRECTION.DOWN:
         return [[(x+(i-1),y-1), (x+i, y-1)] for i in range(3)]    
 
+def get_door_border(room, door):
+    for i, dborder in enumerate(door.borders):
+        if dborder.position.point() in [block.position.point() for block in room.blocks]:
+            border = door.borders[i]
+    return border
+   
+def simple_path(tup1, tup2):
+    current = (tup1[0], tup1[1])
+    path = []
+    while current != tup2:
+        dx = 0
+        dy = 0
+        if current[0] != tup2[0]:
+            if current[0] < tup2[0]:
+                dx = 1
+            else:
+                dx = -1
+        if current[1] != tup2[1]:
+            if current[1] < tup2[1]:
+                dy = 1
+            else:
+                dy = -1
+        current = (current[0]+dx, current[1]+dy)
+        if current != tup2:
+            path.append(Position(x=current[0], y=current[1]))
+    return path
+
 ##############
 # Core classes
 ##############
+
 class Position():
     '''
     position is a tuple, (x, y)
     '''
-    __slots__ = ('x', 'y')
 
     def __init__(self, x, y):
         self.x = x
         self.y = y
-
+        
+    def __getstate__(self):
+        # Capture everything
+        return self.__dict__.copy()
+    
     def __hash__(self):
         return hash((self.x, self.y))
 
@@ -1526,8 +1676,7 @@ class Border():
     '''
     finds the borders of a room
     '''
-    __slots__ = ('position', 'direction', 'internal', 'can_has_door', 'used', 'door')
-
+   
     def __init__(self, position, direction):
         self.position = position
         self.direction = direction
@@ -1536,6 +1685,10 @@ class Border():
         self.used = False
         self.door = None
 
+    def __getstate__(self):
+        # Capture everything
+        return self.__dict__.copy()
+        
     def __eq__(self, other):
         return (self.position, self.direction) == (other.position, other.direction)
 
@@ -1653,8 +1806,7 @@ class Block():
     position
     borders
     '''
-    __slots__ = ('position','borders')
-   
+    
     def __init__(self, position):
         self.position = position
 
@@ -1663,6 +1815,10 @@ class Block():
                         DIRECTION.UP: Border(position, DIRECTION.UP),
                         DIRECTION.DOWN: Border(position, DIRECTION.DOWN)}
     
+    def __getstate__(self):
+        # Capture everything
+        return self.__dict__.copy()
+        
     def geometry_borders(self):
         '''
         returns the borders that are external vs internal to the room
@@ -1716,8 +1872,7 @@ class Room():
     '''
     A collection of blocks...
     '''
-    __slots__ = ('room_id', 'blocks', 'color', 'doors', 'is_exit', 'purpose', 'state', 'contents', 'parent', 'monster', 'treasure', 'furnishings', 'traps', 'hazards', 'hallway', 'stairs', 'description', 'quest', 'old_description')
-
+    
     def __init__(self, parent, position=Position(0,0), hallway=False, stairs=None, is_exit=False):      
         self.blocks = [Block(position)]
         self.color = 'gray'  #random_color()
@@ -1739,6 +1894,27 @@ class Room():
         self.description = ''
         self.quest = ''
         self.old_description = ''
+        self.captive_name = ''
+        self.ceiling_height = '10 ft'
+        
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # Remove the parent to prevent circular recursion during pickle
+        if 'parent' in state:
+            del state['parent']
+        # Capture everything
+        return self.__dict__.copy()
+            
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # Restore the back-references safely
+        for door in getattr(self, 'doors', []):
+            # Ensure the 'rooms' list exists on the door before appending
+            if not hasattr(door, 'rooms'):
+                door.rooms = []
+            # Only add self if it's not already there to avoid duplicates on double-loads
+            if self not in door.rooms:
+                door.rooms.append(self)
         
     def block_positions(self):
         return {block.position for block in self.blocks}
@@ -2113,9 +2289,13 @@ class Room():
         
             if 'Monster' in self.contents:
                 mon_type = self.contents.split(')')[0]+')'
-                monlist = self.parent.info[mon_type].split(', ')
+                monlist = self.parent.info[mon_type].split('|')
                 self.monster = random.sample(monlist,1)[0]
+                if '[solo]' in self.monster:  # remove solo monsters once placed...
+                    self.parent.info[mon_type].replace(self.monster,'').replace('| |','|').replace('||','|')
                 self.monster = '{} [Monster Motivation: {}]'.format(self.monster, self.parent.parent.roll_table(self.parent.parent.AppendixA['Monster Motivation']))
+                
+                    
             if 'Hazard' in self.contents:
                 self.hazards = self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Hazards'])
                 self.furnishings.append('General Hazards: {}'.format(self.hazards))
@@ -2139,7 +2319,13 @@ class Room():
                     hoard = True
                 self.treasure = self.parent.parent.get_treasure(CR, hoard)
         
-        
+            n = int(len(self.blocks)**0.5)
+            nmax = int(int(self.parent.info['Max Ceiling Height'].replace('ft',''))/5)
+            nn = min(n,nmax)
+            if nn > 2:
+                self.ceiling_height = '{}ft'.format(random.randint(2,min(n,nmax))*5)
+            else:
+                self.ceiling_height = '10ft'
             for key in self.parent.parent.AppendixA['Dungeon Dressings'].keys():
                 if key != 'Specific' and 'General' not in key:
                     self.furnishings.append('{}: {}'.format(key, self.parent.parent.roll_table(self.parent.parent.AppendixA['Dungeon Dressings'][key])))
@@ -2156,7 +2342,6 @@ class Door():
     """
     A door.
     """
-    __slots__ = ('parent', 'borders', 'door_type', 'rooms', 'trapped', 'trap')
     
     def __init__(self, parent):
         self.parent = parent
@@ -2184,18 +2369,32 @@ class Door():
         elif d20 ==20:	
             self.door_type = 'Secret door, barred or locked'
         self.trapped = False
+        self.traps = ''
         if self.trapped == True:
             self.traps = 'Trap({}):{} [Trigger: Opening the door]'.format(self.parent.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Damage Severity'])
                                                          , self.parent.parent.parent.roll_table(self.parent.parent.AppendixA['Random Traps']['Trap Effects']))
-    
+   
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # Remove the parent to prevent circular recursion during pickle
+        self.rooms = []
+        self.parent = None
+        return self.__dict__.copy()
+        
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+ 
 class Corridor():
-    __slots__ = ('start_border', 'stop_border', 'path')
-
+    
     def __init__(self, start_border, stop_border, path):
         self.start_border = start_border
         self.stop_border = stop_border
         self.path = path
 
+    def __getstate__(self):
+        # Capture everything
+        return self.__dict__.copy()
+        
     def geometry_segments(self):
         points = [self.start_border.connection_point()]
 
@@ -2206,8 +2405,7 @@ class Corridor():
         return points
 
 class Dungeon():
-    __slots__ = ('rooms','corridors','level', 'info', 'parent','stair_threshold')
-
+   
     def __init__(self, info=None, parent=None, stair_threshold=20):
         self.rooms = []
         self.corridors = []
@@ -2215,6 +2413,19 @@ class Dungeon():
         self.parent = parent
         self.level = self.info['level']
         self.stair_threshold = stair_threshold
+        
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # Remove the parent to prevent circular recursion during pickle
+        if 'parent' in state:
+            del state['parent']
+        return self.__dict__.copy()
+    
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # Manually restore the child's reference to this parent instance
+        for room in self.rooms:
+            room.parent = self
 
     def create_room(self, blocks, doors, trap=False, is_exit=False):
         room = Room(self, is_exit=is_exit)
@@ -2291,7 +2502,97 @@ class Dungeon():
         plt.savefig(self.parent.file_path("Maps/{} level {}.png".format(self.parent.filename, self.info['level'])), dpi=300, bbox_inches='tight')
         if show == True:
             plt.show()
+    
+    def map_dungeon(self,show=True, explored=False, objects=None, color='blue', secret_doors=False, paper='#D7D0C2'):
+        '''
+        This is a map of the dungeon, if players want to have their characters be good at this,
+        or denezins offer to make a map for the players.
+        '''
+        with plt.xkcd():
+            plt.clf()
+            fig = plt.figure(1)
+            plt.axes().set_aspect('equal', 'datalim')
+            fig.set_facecolor(paper)
         
+            rooms = self.rooms
+            if explored == True:
+                rooms = [room for room in rooms if room.color=='green' or room.description != '']
+            if objects != None:
+                rooms = [room for room in rooms if room in objects]
+
+            if len(rooms) > 0:
+                for room in rooms:
+                    borders = list(room.geometry_borders())
+                    #plt.fill(*zip(*make_contour(borders)), '#ffffff')
+        
+                    # room lines only
+                    for border in borders:
+                        plt.plot(*zip(*border), color=color, linewidth=3, alpha=1.0)
+        
+                    # stairs...
+                    if 'stair' in room.purpose.lower():
+                        block_pos = list(set([block.position.point() for block in room.blocks]))
+                        x = sum([a[0] for a in block_pos])/len(block_pos)
+                        y = sum([a[1] for a in block_pos])/len(block_pos) + 0.5
+                        if 'down' in room.purpose.lower():
+                            L = r'$\downarrow$'
+                        else:
+                            L = r'$\uparrow$'
+                        y2 = y - 0.5
+                        y1 = y + 0.5    
+                        plt.hlines(y, xmin=x, xmax=x+1, linewidth=3, color=color)
+                        plt.hlines(y1, xmin=x-0.25, xmax=x+1.25, linewidth=3, color = color)
+                        plt.hlines(y2, xmin=x+0.25, xmax=x+0.75, linewidth=3, color = color)
+                        plt.text(x+0.5, y, L, ha='center', va='center', color=color, zorder=21, fontsize=20)
+                
+                '''
+                for room in self.rooms:
+                    for door_border in room.door_borders():
+                        plt.plot(*zip(*door_border.geometry_borders()), color='b', linewidth=6, alpha=0.75)
+                '''    
+        
+                lines = []
+                # non-secret doors
+                for room in rooms:
+                    for door in room.doors:
+                        if 'secret' not in door.door_type.lower():
+                            for door_border in door.borders:
+                                if door_border.position.point() in [block.position.point() for block in room.blocks]:
+                                    plt.plot(*zip(*door_border.geometry_borders()), color=color, linewidth=12, alpha=1)
+                                    lines.append(door_border)
+        
+                # secret doors
+                if secret_doors == True or objects != None:
+                    for room in rooms:
+                        for door in room.doors:
+                            if 'secret' in door.door_type.lower():
+                                if objects == None or door in objects:
+                                    for door_border in door.borders:
+                                        if door_border.position.point() in [block.position.point() for block in room.blocks]:
+                                            # plt.plot(*zip(*door_border.geometry_borders()), color=color, linewidth=12, alpha=0.5, linestyle='--')
+                                            nlst = door_border.geometry_borders()
+                                            x = sum([a[0] for a in nlst])/2
+                                            y = sum([a[1] for a in nlst])/2
+                                            plt.text(x, y, 'S', ha='center', va='center', color=color, zorder=21)
+                                            lines.append(door_border)
+        
+                for corridor in [corridor for corridor in self.corridors if 
+                                 corridor.start_border in lines and 
+                                 corridor.stop_border in lines]:
+                    plt.plot(*zip(*corridor.geometry_segments()), color=color, linewidth=1, alpha=1)
+        
+                
+                plt.axis('off')
+                plt.savefig(self.parent.file_path("map_level_{}.png".format(self.info['level'])), dpi=300, bbox_inches='tight')
+                
+                if show == True:
+                    plt.show()
+                plt.clf()
+                return self.parent.file_path("map_level_{}.png".format(self.info['level']))
+            else:
+                plt.clf()
+                return None
+            
     def is_intersect_room(self, room):
         return any(current_room.is_intersect(room) for current_room in self.rooms)
 
@@ -2352,7 +2653,11 @@ class Dungeon():
         return positions
                 
     def expand(self, new_room, max_intersection_radius=1, current_door=None, stairway=False):
-
+        '''
+        Finds a place for a room in the dungeon
+        '''
+        threshold = 1  #set for room extra connections
+        
         if len(self.rooms) == 0 or stairway:
             self.rooms.append(new_room)
             return True
@@ -2401,6 +2706,10 @@ class Dungeon():
 
                         self.corridors.append(new_corridor)
                         
+                     
+                            
+                       
+                                
                         return True
                     elif new_room.blocks == 1:  #if a 1-square room fails, the door is cursed
                         self.remove_door(door)
@@ -2482,142 +2791,58 @@ class Dungeon():
         return ret_doors
     
     def remove_door(self, door):
+        #corridor removal...
+        for cor in [corridor for corridor in self.corridors if corridor.start_border in door.borders and corridor.stop_border in door.borders]:
+            self.corridors.pop(self.corridors.index(cor))
+            del cor
+        # clear borders
         for border in door.borders:
             border.used = False
             border.can_has_door = False
             border.door = None
         for room in door.rooms:
-            try:
-                room.doors.pop(room.doors.index(door))
-            except:
-                print("door wasn't in room?")
+            room.doors.pop(room.doors.index(door))
         del door
     
-    def connect_free_doors(self, max_distance):
-        free_doors = self.get_free_doors()
-        connections = []
+    def connect_free_doors(self, threshold):
+        # Connect to doors near rooms...
+        for new_room in [room for room in self.rooms if len(room.blocks)>4]:
+            nr_borders = []
+            for block in new_room.blocks:
+               for border in block.borders.values():
+                   if border not in nr_borders and border.internal == False and border.can_has_door == False:
+                       nr_borders.append(border)
+            # only check rooms that are bigger than stairwells, are not the room itself... may add another room
+            for other_room in [room for room in self.rooms if room != new_room and len(room.blocks)>4]:
+                add_lst = []
+                for door in [door for door in other_room.doors if len(door.borders) == 1]:
+                    ddir = door.borders[0].mirror().direction
+                    for nborder in nr_borders:
+                        if get_distance(door.borders[0].position.point(), nborder.position.point()) <= threshold and nborder.direction == ddir:
+                            add_lst.append((get_distance(door.borders[0].position.point(),border.position.point()), nborder, door))          
+                if len(add_lst) >= 1:
+                    add_lst.sort(key=lambda x: x[0])
+                    new_door = add_lst[0]
+                    new_door[2].rooms.append(new_room)
+                    new_door[2].borders.append(new_door[1])
+                    new_room.doors.append(new_door[2])
+                    new_door[1].can_has_door = True
+                    new_door[1].door = new_door[2]
+                    corridor_path = simple_path(new_door[1].mirror().position.point(),
+                                               new_door[2].borders[0].mirror().position.point())
+                    self.corridors.append(Corridor(new_door[1], new_door[2].borders[0], corridor_path))
 
-        for dungeon_door in free_doors:
-
-            for other_door in free_doors:
-
-                if other_door is dungeon_door:
-                    continue
-
-                # --- Doors must face each other ---
-                if dungeon_door.borders[0].mirror().direction != other_door.borders[0].direction:
-                    continue
-
-                room_a = dungeon_door.rooms[0]
-                room_b = other_door.rooms[0]
-
-                if room_a is room_b:
-                    continue
-
-                # -------------------------------------------------
-                # Candidate borders on each room (external only)
-                # -------------------------------------------------
-
-                dborders = [
-                    b for b in room_a.borders()
-                    if not b.internal
-                    and b.direction == dungeon_door.borders[0].direction
-                ]
-
-                oborders = [
-                    b for b in room_b.borders()
-                    if not b.internal
-                    and b.direction == other_door.borders[0].direction
-                ]
-
-                if not dborders or not oborders:
-                    continue
-
-                # -------------------------------------------------
-                # Find closest border pair
-                # -------------------------------------------------
-
-                candidates = []
-
-                for db in dborders:
-                    for ob in oborders:
-                        dist = get_distance(
-                            db.position.point(),
-                            ob.position.point()
-                        )
-                        candidates.append((dist, db, ob))
-
-                dist, db, ob = min(candidates, key=lambda x: x[0])
-
-                if dist >= max_distance:
-                    continue
-
-                # -------------------------------------------------
-                # Pathfinding validation
-                # -------------------------------------------------
-
-                try:
-                    filled = room_a.block_positions() | room_b.block_positions()
-
-                    path_length, path = find_path(
-                        ob.mirror().position,
-                        db.mirror().position,
-                        filled_cells=filled,
-                        max_path_length=max_distance
-                    )
-                except Exception:
-                    path_length = None
-
-                if path_length is None or path_length >= max_distance:
-                    continue
-
-                # =================================================
-                # ✅ VALID CONNECTION — MOVE SINGLE DOOR OBJECT
-                # =================================================
-
-                # ---- Clear OLD borders (door currently occupies them) ----
-                for border in dungeon_door.borders:
-                    border.used = False
-                    border.can_has_door = False
-                    border.door = None
-
-                for border in other_door.borders:
-                    border.used = False
-                    border.can_has_door = False
-                    border.door = None
-
-                # ---- Remove other_door from its room ----
-                if other_door in room_b.doors:
-                    room_b.doors.remove(other_door)
-
-                # -------------------------------------------------
-                # Assign NEW borders to dungeon_door
-                # -------------------------------------------------
-
-                dungeon_door.borders = [db, ob]
-
-                db.used = ob.used = True
-                db.can_has_door = ob.can_has_door = True
-                db.door = ob.door = dungeon_door
-
-                # ---- Update room connections ----
-                if room_b not in dungeon_door.rooms:
-                    dungeon_door.rooms.append(room_b)
-
-                if dungeon_door not in room_b.doors:
-                    room_b.doors.append(dungeon_door)
-
-                # -------------------------------------------------
-                # Create corridor
-                # -------------------------------------------------
-
-                new_corridor = Corridor(db, ob, path)
-                self.corridors.append(new_corridor)
-
-                connections.append((room_a, room_b, dungeon_door))
-
-        return connections
-               
+            # remove bad doors
+            rmlst = []
+            for door in new_room.doors:
+                if len(door.rooms) == 2:
+                    for droom in door.rooms:
+                        if droom != new_room:
+                            if droom in rmlst:
+                                self.remove_door(door)
+                            else:
+                                rmlst.append(droom)
+    
     def add_area(self):
         '''
         Rolls on some tables from the DMG
@@ -2800,6 +3025,6 @@ General: Spiral Stairs DESCENDING from a landing
                             new_room.stairs = mirror_room
                 
             # connect loose doors
-            self.connect_free_doors(max_distance=3)
+            self.connect_free_doors(threshold=1)
             
             
