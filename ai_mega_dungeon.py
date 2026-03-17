@@ -73,6 +73,7 @@ class AIMegaDungeon:
         self.current_room = None
         self.dungeon_name = dungeon
         self.levelsdf = pd.read_csv(self.file_path(levelfile), sep='\t')
+        self.npcs = {}
         try:
             self.load(filename)
         except:
@@ -356,6 +357,8 @@ class AIMegaDungeon:
     especially when the quest is for an item), and details is where you have the quest giver's name and what little information they have to go on.  
     Remember that the quest giver may not have all the information I have given you, and thus it wouldn't be in the listing.  Do not include floor numbers.
     Note floors start at 0, and tend to go down in negative numbers (0 not lowest)
+    
+    MAKE SURE TITLE IS ON THE FIRST LINE
                 '''
                 try_again = False
             except ValueError:
@@ -861,7 +864,137 @@ class AIMegaDungeon:
                 self.current_room = new_room[0]
                 reply = reply + '\n    ...opened'
         return reply
-           
+         
+    def get_npc(self, 
+               name, 
+               vitals=None, 
+               appearance=None, 
+               abilities=None,
+               talent=None,
+               mannerisms=None,
+               personality=None,
+               notes=None):
+        '''
+        '''
+        try:
+            self.npcs[name.lower()]
+        except:
+            query = '''
+            Write a 1-3 paragraph write up for an NPC, including motivations, combat startegies, and roleplaying notes.
+            
+            Chose an appropriate statblock from the monster manual, and make sure the write up makes sesne given the statblock.
+            The statblock's species should match that of the NPC, or be a generic humanoid statblock.
+            What we know about the NPC:
+            '''.format(name)
+
+            if vitals == None:
+                if '(' in name:
+                    lst = name.split(' (')
+                    name = lst[0]
+                    vitals = lst[1].replace(')','')
+                else:
+                    vitals = 'human'
+            query = query + '\n\nName: {}'.format(name)
+            query = query + '\nVitals: {}'.format(vitals)
+        
+            # appearance
+            if appearance == None:
+                choice = ['Distinctive jewelry: earrings, necklace, circlet, bracelets',
+                          'Piercings', 'Flamboyant or outlandish clothes',
+                          'Formal, clean clothes', 'Ragged, dirty clothes',
+                          'Pronounced scar', 'Missing teeth', 'Missing fingers',
+                          'Unusual eye color (or two different colors)', 'Tattoos',
+                          'Birthmark', 'Unusual skin color', 'Bald',
+                          'Braided beard or hair', 'Unusual hair color',
+                          'Nervous eye twitch', 'Distinctive nose',
+                          'Distinctive posture (crooked or rigid)',
+                          'Exceptionally beautiful', 'Exceptionally ugly']
+                appearance = random.sample(choice,1)[0]
+                query = query + '\nAppearance: {}'.format(appearance)
+        
+            #abilities
+            if abilities == None:
+                high = ['Strength — powerful', 'Strength — brawny', 'Strength — strong as an ox',
+                        'Dexterity — lithe', 'Dexterity — agile', 'Dexterity — graceful',
+                        'Constitution — hardy','Constitution — hale', 'Constitution — healthy',
+                        'Intelligence — studious', 'Intelligence — learned', 'Intelligence — inquisitive',
+                        'Wisdom — perceptive', 'Wisdom — spiritual', 'Wisdom — insightful',
+                        'Charisma — persuasive', 'Charisma — forceful', 'Charisma — born leader']
+                abilities = 'High: {} '.format(random.sample(high,1)[0])
+                low = ['Strength — feeble', 'Strength — scrawny',
+                       'Dexterity — clumsy', 'Dexterity — fumbling',
+                       'Constitution — sickly', 'Constitution — pale',
+                       'Intelligence — incurious','Intelligence — slow',
+                       'Wisdom — oblivious', 'Wisdom — absentminded',
+                       'Charisma — dull', 'Charisma — boring']
+                abilities = '{}, Low: {} '.format(abilities, random.sample(low,1)[0])
+            query = query + '\nAbilities: {}'.format(abilities)
+                
+            #talent
+            if talent == None:
+                choice = ['Plays a musical instrument', 'Speaks several languages fluently',
+                          'Unbelievably lucky', 'Perfect memory', 'Great with animals',
+                          'Great with children', 'Great at solving puzzles', 'Great at one game',
+                          'Great at impersonations', 'Draws beautifully', 'Paints beautifully',
+                          'Sings beautifully', 'Drinks everyone under the table',
+                          'Expert carpenter', 'Expert cook', 'Expert dart thrower and rock skipper',
+                          'Expert juggler', 'skilled actor and master of disguise',
+                          'Skilled dancer', 'Knows thieves’ cant']
+                talent = random.sample(choice,1)[0]
+            query = query + '\nTalent: {}'.format(talent)
+        
+            #mannerisms
+            if mannerisms == None:
+                choice = ['Prone to singing, whistling, or humming quietly', 
+                          'Speaks in rhyme or some other peculiar way',
+                          'Particularly low or high voice','Speaks in an unusually formal manner',
+                          'Enunciates overly clearly', 'Speaks loudly', 'Whispers',
+                          'Uses flowery speech or long words', 'Frequently uses the wrong word',
+                          'Uses colorful oaths and exclamations','Makes constant jokes or puns',
+                          'Prone to predictions of doom',  'Fidgets', 'Squints',
+                          'Stares into the distance', 'Chews something', 'Paces',
+                          'Taps fingers', 'Bites fingernails', 'Twirls hair or tugs beard']
+                mannerisms = random.sample(choice,1)[0]
+            query = query + '\nMannerisms: {}'.format(mannerisms)
+        
+            #personality
+            if personality == None:
+                choice = ['	Argumentative', 'Arrogant', 'Blustering', 'Rude', 'Curious', 'Friendly',
+                          'Honest', 'Hot tempered', 'Irritable', 'Ponderous', 'Quiet', 'Suspicious']
+                personality = random.sample(choice,1)[0]
+            query = query + '\nPersonality: {}'.format(personality)    
+        
+            # notes
+            if notes == None:
+                choice = ['Beauty','Domination','Charity','Greed','Greater good','Might','Life',
+                          'Pain','Respect','Retribution','Self-sacrifice','Slaughter','Community',
+                          'Change','Fairness','Creativity','Honor','Freedom','Logic','Independence',
+                          'Responsibility','No limits','Tradition','Whimsy','Balance','Aspiration',
+                          'Knowledge','Discovery','Live and let live','Glory','Moderation','Nation',
+                          'Neutrality','Redemption','People','Self-knowledge']
+                notes = ' Ideal: {}'.format(random.sample(choice,1)[0])
+                choice = ['Dedicated to fulfilling a personal life goal',
+                          'Protective of close family members',
+                          'Protective of colleagues or compatriots',
+                          'Loyal to a benefactor, patron, or employer',
+                          'Captivated by a romantic interest', 'Drawn to a special place',
+                          'Protective of a sentimental keepsake',
+                          'Protective of a valuable possession',
+                          'Out for revenge']
+                notes = '{} \n      Bond: {}'.format(notes, random.sample(choice,1)[0])
+                choice = ['Forbidden love or susceptibility to romance',
+                          'Enjoys decadent pleasures', 'Arrogance',
+                          'Envies another creature’s possessions or station',
+                          'Overpowering greed', 'Prone to rage',
+                          'Has a powerful enemy','Prone to sudden suspicion',
+                          'Shameful or scandalous history', 'Secret crime or misdeed',
+                          'Possession of forbidden lore', 'Foolhardy bravery']
+                notes = '{} \n      Flaw/Secret: {}'.format(notes, random.sample(choice,1)[0])
+            query = query + '\nNotes: {}'.format(notes) 
+        
+            self.npcs[name.lower()] = self.get_chat_response(query, role="You are a TTRPG writer tasked to write up NPCs")
+        return self.npcs[name.lower()]
+    
     ## AI CALLS & TOOLS
     def get_chat_response(self, prompt, role="You are a helpful assistant.", model="google/gemini-2.0-flash-001"):
         # Create the client pointing to OpenRouter
