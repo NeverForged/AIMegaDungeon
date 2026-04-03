@@ -44,20 +44,38 @@ async def on_message(message):
     
     ## $load
     if message.content.startswith('$load'):
-        content = message.content 
-        aimd.load(filename=content.split(' ')[1])
+        syntax = '''SYNTAX:
+        $load "[GameName]"
+        '''
+        try:
+            content = message.content 
+            gname = content.split(' "')[1].replace('"','')
+        except:
+            await message.channel.send(syntax)  
+            return
+        print(gname)
+        aimd.load(filename=gname)
         print(aimd.dungeon_name)
-        await message.channel.send('Loaded {}: {}'.format(content.split(' ')[1],aimd.dungeon_name))
+        await message.channel.send('Loaded {}: {}'.format(gname,aimd.dungeon_name))
         lst = aimd.timekeeping()
         for b in lst:
-            await message.channel.send(b)
+                await message.channel.send(b)
+        
         return
         
     ## $save
     if message.content.startswith('$save'):
-        content = message.content 
-        aimd.save(filename=content.split(' ')[1])
-        await message.channel.send('Saved {}: {}'.format(content.split(' ')[1],aimd.dungeon_name))
+        syntax = '''SYNTAX:
+        $save "[GameName]" '''
+        try:
+            content = message.content 
+            gname = content.split(' "')[1].replace('"','')
+        except:
+            await message.channel.send(syntax)  
+            return
+            
+        aimd.save(filename=gname)
+        await message.channel.send('{} Saved.'.format(gname))
         return
         
     # $quests     
@@ -81,24 +99,37 @@ async def on_message(message):
         
     # $timer
     if message.content.startswith('$timer'):
-        content = message.content.split('"')
+        syntax = '''
+        Add a timer of [event] for time N
+        $timer "event=[event]" ["hours=N"] ["seconds=N"] ["turns=N"] ["rnds=N"] ["minutes=N"] ["days=N"]
+        '''
+        content = message.content.split(' "')
         hours,s,days,mins,rnds,turns = 0,0,0,0,0,0
-        event = content[1]
-        a = content[2] 
-        if 'h' in a:
-            hours = get_numbers(a)
-        elif 'seconds' in a:
-            seconds = get_numbers(a)
-        elif 't' in a:
-            turns = get_numbers(a)
-        elif 'r' in a:
-            rnds = get_numbers(a)
-        elif 'm' in a:
-            mins = get_numbers(a)
-        elif 'd' in a:
-            days = get_numbers(a)
-        elif 's' in a:
-            s = get_numbers(a)
+        try:
+            event = content[1].split('=')[1].replace('"','')
+            a = content[2]
+        except:
+            await message.channel.send(syntax)
+            return
+        for a in content[2:]:
+            if 'h' in a:
+                hours = get_numbers(a)
+            elif 'seconds' in a.lower():
+                seconds = get_numbers(a)
+            elif 't' in a.lower():
+                turns = get_numbers(a)
+            elif 'r' in a.lower():
+                rnds = get_numbers(a)
+            elif 'm' in a.lower():
+                mins = get_numbers(a)
+            elif 'd' in a.lower():
+                days = get_numbers(a)
+            elif 's' in a.lower():
+                s = get_numbers(a)
+            else:
+                await message.channel.send(syntax)
+                return
+            
         aimd.add_timer(event, hours, s, days, mins, rnds, turns)
         lst = aimd.timekeeping()
         for b in lst:
@@ -107,9 +138,17 @@ async def on_message(message):
         
     # $time
     if message.content.startswith('$time'):
+        syntax = '''SYNTAX:
+        Get the current time
+        $time
+        
+        OR
+        Pass N amount of Time
+        $time ["hours=N"] ["seconds=N"] ["turns=N"] ["rnds=N"] ["minutes=N"] ["days=N"]
+        '''
         content = message.content
         hours,s,days,mins,rnds,turns = 0,0,0,0,0,0
-        if len(content.split(' ')) > 1:
+        if len(content.split(' "')) > 1:
             for a in content.split(' '):
                 if 'h' in a:
                     hours = get_numbers(a)
@@ -125,6 +164,9 @@ async def on_message(message):
                     days = get_numbers(a)
                 elif 's' in a:
                     s = get_numbers(a)
+                else:
+                    await message.channel.send(syntax)
+                    return
         lst = aimd.pass_time(hours, s, days, mins, rnds, turns)
         for b in lst:
             await message.channel.send(b)
@@ -133,8 +175,11 @@ async def on_message(message):
     #dm-bad-image
     if message.content.startswith('$dm-bad-image'):
         room = aimd.current_room
-        image_location =  aimd.file_path("Rooms/{} Level {} Room {}.png".format(aimd.filename, room.parent.info['level'], room.room_id))
-        os.remove(image_location)
+        try:
+            image_location =  aimd.file_path("Rooms/{} Level {} Room {}.png".format(aimd.filename, room.parent.info['level'], room.room_id))
+            os.remove(image_location)
+        except FileNotFoundError:
+            print('File not found')
         message.content='$explore'
         # no return, explore is next...
         
@@ -162,16 +207,116 @@ async def on_message(message):
         
     # $open
     if message.content.startswith('$open'):
-        contents = message.content.split(' ')
-        door_key = contents[1]
+        syntax = '''SYNTAX
+        $open "[Door]" ["unlocked=True"]
+        
+        [Door] is as written in $explore response
+        '''
+        contents = message.content.split(' "')
+        try:
+            door_key = contents[1].replace('"','')
+        except:
+            await message.channel.send(syntax)
+            return
         unlock = False
         if len(contents)>=3:
             unlocked = contents[2]
-            if 'true' in unlcoked.lower():
+            if 'true' in unlocked.lower():
                 unlock = True
+            else:
+                await message.channel.send(syntax)
+                return
         reply = aimd.open_door(door_key = door_key, unlocked=unlock)
         await message.channel.send(reply)
         return
+        
+    # $dm-clear-room
+    if message.content.startswith('$dm-clear-room'):
+        syntax = '''SYNTAX
+        $dm-clear-room --True
+        
+        Need the --True to make sure we really want to do this.
+        Use $remove-furnishings to remove furnishings
+        '''
+        if '--True' in message.content:
+            aimd.current_room.clear_room(clear_all = False)
+            await message.channel.send('{} cleared'.format(aimd.current_room.room_id))
+        else:
+            await message.channel.send(syntax)
+        return
+        
+    # $remove-furnishing
+    if message.content.startswith('$remove-furnishing'):
+        syntax = '''SYNTAX
+        $remove-furnishing "[General Furnishishings: Object" ["Other: object"]
+        
+        Each must be written exactly as it appears in the list, there is one space after the colon.
+        '''
+        contents = message.content.split(' "')
+        for item in contents:
+            if '$remove-furnishing' not in item:
+                try:
+                    print(item[:-1])
+                    a = aimd.current_room.furnishings.pop(aimd.current_room.furnishings.index(item[:-1]))
+                    print(a)
+                    await message.channel.send('{} Removed'.format(a))
+                except ValueError as e:
+                    await message.channel.send('{}\n\n{}'.format(e, syntax))
+        return
+                
+    # $dm-npc
+    if message.content.startswith('$dm-npc'):
+        syntax = '''
+        creates or returns an NPC.  Any details not specified are randomly generated
+        
+        $dm-npc "name=[Name]" 
+                ["vitals=Race/Class/Occupation"] 
+                ["appearance=None"] 
+                ["abilities=High/Low ability scores"]
+                ["talent=any special talents"]
+                ["mannerisms=mannerism(s)"]
+                ["personality=brief description or adjectives"]
+                ["notes=any other notes"]
+        '''
+        contents = message.content.split(' "')
+        vitals = None
+        appearance = None 
+        abilities = None
+        talent = None
+        mannerisms = None
+        personality = None
+        notes = None
+        
+        try:
+            name = contents[1].split('=')[1].replace('"','')
+        except:
+            await message.channel.send(syntax)
+            return
+        for a in contents:
+            b = a.split('=')
+            if a == "$dm-npc" or a[:4].lower()=='name':
+                print(a)
+            elif b[0].lower() == 'vitals':
+                vitals = b[1][:-1]
+            elif b[0].lower() == 'appearance':
+                appearance = b[1][:-1]
+            elif b[0].lower() == 'abilities':
+                abilities = b[1][:-1]
+            elif b[0].lower() == 'talent':
+                talent = b[1][:-1]
+            elif b[0].lower() == 'mannerisms':
+                mannerisms = b[1][:-1]   
+            elif b[0].lower() == 'personality':
+                personality = b[1][:-1]
+            elif b[0].lower() == 'notes':
+                notes = b[1][:-1]
+            else:
+                await message.channel.send(syntax)
+                return
+        npc = aimd.get_npc(name, vitals, appearance, abilities, talent, mannerisms, personality, notes)
+        await message.channel.send(npc)
+        return
+        
         
 # Run the bot with your token
 client.run(TOKEN)

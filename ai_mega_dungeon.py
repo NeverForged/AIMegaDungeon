@@ -174,7 +174,7 @@ class AIMegaDungeon:
         [self.timers.remove(timer) for timer in self.timers if timer[0] < self.time]
         lst = [timer for timer in self.timers if timer[0] > self.time]
         lst = sorted(lst, key=lambda x:x[0])
-        ret_lst.extend(['{} Time Remaining {}s'.format(timer[1], timer[0] - self.time) for timer in lst])
+        ret_lst.extend(['{} [Time Remaining {}s]'.format(timer[1], timer[0] - self.time) for timer in lst])
         
         # clear old quests
         lst = sorted(self.quests, key=lambda x:x[0])
@@ -329,6 +329,8 @@ class AIMegaDungeon:
                     tprompt = f"I need to specify the results of a SINGLE {treasure}s in {room.treasure}."
                     tprompt = tprompt + f"ONLY REPORT THE ITEM [if a weapon or armor piece, also determine the type of weapon or armor]"
                     tprompt = tprompt + f"Completley specify one {treasure} for quest development reasons, and just return the item and it's details"
+                    if 'magic' in treasure.lower():
+                        tprompt = tprompt + f"   Magical Items for thi purpose cannot be temporary, so no Potions or Scrolls please."
                     actual_treasure = self.get_chat_response(tprompt,role='Someone that is concise')
                     room.treasure = room.treasure + ' where one of the {}s is already known to be a {}'.format(treasure, actual_treasure)
             
@@ -877,7 +879,7 @@ class AIMegaDungeon:
         '''
         '''
         try:
-            self.npcs[name.lower()]
+            print(self.npcs[name.lower()])
         except:
             query = '''
             Write a 1-3 paragraph write up for an NPC, including motivations, combat startegies, and roleplaying notes.
@@ -1201,7 +1203,7 @@ class AIMegaDungeon:
                                 )
                     step_.set_clip_path(floor_poly)
                     ax.add_patch(step_)
-                # Ensure it clips to the trapezoid walls
+                # Ensure it clips to the area walls
                 step.set_clip_path(floor_poly)
                 ax.add_patch(step)
 
@@ -1261,7 +1263,7 @@ class AIMegaDungeon:
         if show == True:
             plt.show()
     
-    def render_room(self, room, show=True):
+    def render_room(self, room, show=True, showog=False):
         '''
         creates a prompt and sensds it to make the AI render the room.
         '''
@@ -1272,6 +1274,14 @@ class AIMegaDungeon:
         output_image_path = self.file_path("Rooms/{} Level {} Room {}.png".format(self.filename,
                                                                                   room.parent.info['level'],
                                                                                   room.room_id))
+                                                                                  
+        with Image.open(input_image_path) as img:
+            # Get width and height
+            ogwidth, ogheight = img.size  
+        
+        if showog == True:
+            display(IPImage(input_image_path))
+            
         def to_data_uri(path):
             with open(path, "rb") as f:
                 data = f.read()
@@ -1310,19 +1320,18 @@ class AIMegaDungeon:
                     dd = True
                     dt = door.door_type
         
-        newline = ''
+        newline = 'DOOR COUNT RULE: Render exactly one door for every Brown polygon in room.png\n'
         ndoors = 0
         for tup in [(ud, 'NORTHERN', ut), (dd, 'SOUTHERN', dt), (ld, 'WESTERN', lt), (rd, 'EASTERN', rt)]:
             if tup[0] == False:
-                # newline = newline + '    THE {} WALL IS SOLID.\n        THERE ARE NO DOORS/WINDOWS/OPENINGS IN THE {} WALL.\n        The AI must strictly ignore any instinct to add "balance" or "symmetry" to the room.\n         The {} boundary is a dead-end, any door added here is a failure\n'.format(tup[1], tup[1], tup[1])
-                newline = newline + 'SOLID WALLS: The {} wall is a featureless, solid stone monolith. There are no gaps, no frames, and no openings. Ignore all instincts for symmetry.'.format(tup[1])
-        
+                newline = newline + '{} WALL CONSTRAINT: The {} Wall is solid.  There are no doors/windows/openings IN THE {} WALL.  The AI must strictly ignore any instinct to add "balance" or "symmetry" to the room.  The {} boundary is a dead-end, any door added here is a failure\n'.format(tup[1], tup[1], tup[1], tup[1])
             elif tup[0]==True:
                 ndoors += 1
-        if ndoors >= 1:
-            newline = 'There are a total of {} doors and only {} doors.  Doors are only on brown pixels in room.png.  Any more or fewer than {} doors is a failure\n'.format(ndoors,ndoors,ndoors) + newline
-        floorline =  '''    FLOORS: The black grid is strictly for the horizontal floor. Do not project or continue any grid lines into the blue trapezoids. The floor texture and grid must stop abruptly—with zero transition—at the inner black line. If a grid line hits the black boundary, it must disappear instantly.
-                            Floor is only in the gridded section, and must not creep into the wall area (no floor in in the blue trapezoids from room.png).\n"
+        if ndoors >= 1:  #replace with this...
+            newline = newline + '    As there are {} brown polygons, render only {} doors. If a wall is BLUE in room.png, it is 100% solid'.format(ndoors,ndoors)
+               
+        floorline =  '''    FLOORS: The black grid is strictly for the horizontal floor. Do not project or continue any grid lines into the blue areas. The floor texture and grid must stop abruptly—with zero transition—at the inner black line. If a grid line hits the black boundary, it must disappear instantly.
+                            Floor is only in the gridded section, and must not creep into the wall area (no floor in in the blue areas from room.png).\n"
                         '''
 
         if 'stairwell' in room.purpose.lower() and 'down' in room.purpose.lower():   
@@ -1342,8 +1351,8 @@ class AIMegaDungeon:
             #f"- BLACK pixels in MASK.png are FROZEN. Do not change them.\n"
             # f"- WHITE pixels in MASK.png are the ONLY editable zones. \n\n"
             f"PIXEL LOGIC (THE LEGEND):\n Interpret the colors in room.png with absolute mathematical priority:\n   BROWN POLYGON: This is the ONLY location for a door. If you see Brown, render a door. \n   BLUE AREA: This is SOLID WALLS. No exceptions. No openings.\n   RED LABELS: These are coordinates for door types. Delete the text after reading.\n"
-            f"1. ARCHITECTURE: The blue trapezoids are VERTICAL WALLS that act as a 3D cookie-cutter. They physically overlap and HIDE the floor. There is no grid on the walls. The floor does not 'meet' the wall; it is simply cut off by the wall. Do not render any bevel, shadow-line, or ledge where the floor hits the blue area\n."
-            f"    ARCHITECTURE: The BLUE trapezoids represent SOLID, IMPENETRABLE WALLS. If a wall does not have a brown door polygon, it is a single, continuous, and unbroken wall.\n"
+            f"1. ARCHITECTURE: The blue areas are VERTICAL WALLS that act as a 3D cookie-cutter. They physically overlap and HIDE the floor. There is no grid on the walls. The floor does not 'meet' the wall; it is simply cut off by the wall. Do not render any bevel, shadow-line, or ledge where the floor hits the blue area\n."
+            f"    ARCHITECTURE: The BLUE areas represent SOLID, IMPENETRABLE WALLS. If a wall does not have a brown door polygon, it is a single, continuous, and unbroken wall.\n"
             #f"2. MOOD & STYLE: {room.purpose} ({room.state})  Use Even neutral lighting (No directional shadows separating objects) and realistic textures.\n"
             f"2. MOOD & STYLE: {room.purpose} ({room.state})  Use cinematic lighting and realistic textures.\n"
             f"{floorline}\n"
@@ -1355,7 +1364,7 @@ class AIMegaDungeon:
             f"    Walls should start at the black line around the gridded section.\n"
             f"3. DOOR ANCHORS: ONLY render doors where you see a BROWN POLYGON and a RED LABEL. If an area is BLUE, it is a SOLID WALL\n"
             f"    Render a closed medieval door made of the labeled material exactly inside the brown gaps. If a wall is solid blue in the mask, it is a PERMANENT wall.\n"
-            f"    The Brown trapezoids are gaps in the walls filled with a door.  Doors must be INSIDE the walls like real doors\n"
+            f"    The Brown areas are gaps in the walls filled with a door.  Doors must be INSIDE the walls like real doors\n"
             f"    Remove the red labels\n"
             f"{newline}\n"
             f"    Do not add 'cinematic' door frames or gaps where they are not drawn in room.png.\n"
@@ -1368,7 +1377,8 @@ class AIMegaDungeon:
             f" DO NOT DRAW BLACK LINES FROM mask.png on the final image, especially wall corner lines\n"
             f"      only lines from room.png are to be reprooduced on final image\n"
             f"    Do not draw door labels on the map\n\n"
-            f"  Look at the provided image room.png. ONLY render doors on the BROWN pixels. If a pixel is BLUE, it is a solid wall with no gaps.  If a pixel is white, it is a floor."
+            f"  Look at the provided image room.png. ONLY render doors on the BROWN pixels. If a pixel is BLUE, it is a solid wall with no gaps.  If a pixel is white, it is a floor.\n"
+            f"    VIOLATION LOGIC: Any door frame, handle, gap, or recessed area rendered on a Blue pixel is a total failure of the schematic task.\n"
             f"OUTPUT: ONLY the base64 data URI. No text."
         )
         
@@ -1423,13 +1433,116 @@ class AIMegaDungeon:
                 with open(output_image_path, "wb") as f:
                     f.write(base64.b64decode(raw_b64))
                 print("✅ Saved edited image:", output_image_path)
+                
+                #resize it for roll20 or other VTTs
+                with Image.open(output_image_path) as img:
+                    resized_img = img.resize((ogwidth, ogheight))
+                    resized_img.save(output_image_path)
+                    
                 if show == True:
                     display(IPImage(filename=output_image_path))
+                
             else:
                 print("⚠️ No image returned — model may have replied with text only.")
         else:
             print("❌ API Error", response.status_code, response.text)
-  
+
+    def edit_room_image(self, edits, show=True):
+        '''
+        Need to be specific and, if mentioning doors, spoecify to leave the other doors alone.
+        '''
+        room = self.current_room
+        api_key = str(self.OPENROUTER_API_KEY).strip()
+        image_path = self.file_path("Rooms/{} Level {} Room {}.png".format(self.filename,
+                                                                                  room.parent.info['level'],
+                                                                                  room.room_id))
+
+        edits = ' -' + '\n-'.join(edits.split('.'))
+        with Image.open(image_path) as img:
+            # Get width and height
+            ogwidth, ogheight = img.size  
+
+        if ogwidth >= ogheight:
+            width = 1024
+            height = int((ogheight*width)/ogwidth)
+        else:
+            height = 1024
+            width = int((height*ogwidth)/ogheight)
+
+        with Image.open(image_path) as img:
+            resized_img = img.resize((width, height))
+            resized_img.save(image_path)
+
+        def to_data_uri(path):
+                with open(path, "rb") as f:
+                    data = f.read()
+                b64 = base64.b64encode(data).decode("utf-8")
+                ext = path.split(".")[-1]
+                return f"data:image/{ext};base64,{b64}"
+
+        img_data_uri = to_data_uri(image_path)
+
+        prompt = '''
+        Using the image provided, {}
+        '''.format(edits)
+        # API REQUEST
+        payload = {
+            "model": "google/gemini-2.5-flash-image",  # use a multimodal Vision model
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": img_data_uri}},
+                    ],
+                }
+            ],
+        }
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        
+        # PROCESS OUTPUT
+        if response.status_code == 200:
+            res = response.json()
+            msg = res["choices"][0]["message"]
+        
+            # Find base64 image in the response
+            img_url = None
+            if "images" in msg and len(msg["images"]) > 0:
+                img_url = msg["images"][0].get("image_url", {}).get("url")
+        
+            # If not in images, maybe in content
+            if not img_url:
+                content = msg.get("content", "")
+                if "base64," in content:
+                    img_url = content.split("base64,")[-1]
+        
+            if img_url:
+                raw_b64 = img_url.split("base64,")[-1]
+                with open(image_path, "wb") as f:
+                    f.write(base64.b64decode(raw_b64))
+                print("✅ Saved edited image:", image_path)
+                
+                #resize it for roll20 or other VTTs
+                with Image.open(image_path) as img:
+                    resized_img = img.resize((ogwidth, ogheight))
+                    resized_img.save(image_path)
+                    
+                if show == True:
+                    display(IPImage(filename=image_path))
+                
+            else:
+                print("⚠️ No image returned — model may have replied with text only.")
+        else:
+            print("❌ API Error", response.status_code, response.text)
+        
 ##############
 # Enumerations
 ##############
@@ -2329,7 +2442,7 @@ class Room():
     def make_circle(self, diameter):
         '''
         Starts a circle from the firs position...
-        '''
+        
         start = self.blocks[0].position.point()
         center = start
         for i in range(-int(diameter/10)-2,int(diameter/10)+2,1):
@@ -2340,6 +2453,9 @@ class Room():
                     for block in self.blocks:
                         block.sync_borders_with(new_block)
                     self.blocks.append(new_block)
+        '''
+        # killing circular rooms because they fail to render, replacing wit squares.
+        self.make_rectangle(diameter, diameter)
         
     def make_rectangle(self, width, height, hallway=False):
         '''
@@ -2389,8 +2505,13 @@ class Room():
         self.treasure = ''
         if clear_all:
             self.furnishings = []
+            self.trick= ''
             self.hazards = ''
-        self.color = 'gray'
+            self.state = ''
+            self.color = 'gray'
+        self.description = ''
+        self.quest = ''
+        
         
     def stock_room(self, hallway=False):
         '''
@@ -3101,9 +3222,9 @@ class Dungeon():
                         upstr = '''
 General: GRANITE STAIRS FROM ROOM.png
 1. MASK BOUNDARIES STRICT
-The floor is ONLY for the area defined by the floor mask in mask.png. Do NOT extend floor textures onto the white wall trapezoids. MASK IS A HARD CLIPPING PATH. The black pixels in MASK.png are a physical void.
+The floor is ONLY for the area defined by the floor mask in mask.png. Do NOT extend floor textures onto the white wall areas. MASK IS A HARD CLIPPING PATH. The black pixels in MASK.png are a physical void.
 2. STAIR HEIGHT VS WALLS
-The stairs are physical stone blocks that are attached to the vertical walls. The walls represented by white trapezoids must look like 90-degree upright surfaces rather than flat floor. 
+The stairs are physical stone blocks that are attached to the vertical walls. The walls represented by white areas must look like 90-degree upright surfaces rather than flat floor. 
 3. DOOR MASK PRIORITY
 The door must be rendered flush against the floor at the doorway mask location. No stair wedges can overlap or exist inside the door's physical space. The DOOR must remain inside the door gap and flush with the vertical wall as a flat vertical plane.
 4. HEIGHT MAP DEPTH
@@ -3136,7 +3257,7 @@ General: Spiral Stairs DESCENDING from a landing
 ### HARD MASK RULE
 - No white pixel in mask.png that is blue in room.png may be anything other than an inner wall face.
 - THE PIT IS FILLED WITH STAIRS, THE BOTTOM IS UNSEEN (as there are more flights below the visible)
-- Black lines in mask.png mark hard barriers between textures, the square is the landing, the trapezoid the door, the X the edges of the walls, the circle the pillar.
+- Black lines in mask.png mark hard barriers between textures, the square is the landing, the area the door, the X the edges of the walls, the circle the pillar.
 
 ### VISUAL RULE:
 - The wall texture must directly touch the stair edges and the door edges. 
