@@ -5,6 +5,7 @@
 
 # Ignore the 'build' directory and everything inside it
 Rooms/
+roll20_session/
 
 # Ignore a specific file
 # config.local.json
