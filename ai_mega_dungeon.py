@@ -1450,6 +1450,8 @@ class AIMegaDungeon:
     def edit_room_image(self, edits, show=True):
         '''
         Need to be specific and, if mentioning doors, spoecify to leave the other doors alone.
+        
+        'Replace the 1 door on the Northern Wall (just the top door) with bare wall.  Leave the other 3 doors intact.'
         '''
         room = self.current_room
         api_key = str(self.OPENROUTER_API_KEY).strip()
@@ -1542,7 +1544,246 @@ class AIMegaDungeon:
                 print("⚠️ No image returned — model may have replied with text only.")
         else:
             print("❌ API Error", response.status_code, response.text)
+ 
+class Roll20Automator:
+    def __init__(self, user_data_dir="./roll20_session"):
+        self.user_data_dir = user_data_dir
+        self.playwright = None
+        self.context = None
+        self.page = None
+
+    async def connect(self):
+        """Starts at Google to establish a clean session, then you navigate."""
+        print("Launching Browser...")
+        self.playwright = await async_playwright().start()
         
+        self.context = await self.playwright.chromium.launch_persistent_context(
+            user_data_dir=self.user_data_dir,
+            headless=False,
+            # Standard arguments to look like a normal browser
+            args=["--disable-blink-features=AutomationControlled"],
+            viewport={'width': 1920, 'height': 1080}
+        )
+        
+        self.page = self.context.pages[0]
+        
+        # Start at Google as requested
+        print("Navigating to Google...")
+        await self.page.goto("https://www.google.com")
+        
+        print("\n--- MANUAL STEPS ---")
+        print("1. In the browser window, go to Roll20.net and log in.")
+        print("2. Launch your game: ")
+        print("3. Once the map is loaded, come back here to run your upload.")
+        
+
+    async def close(self):
+        """Clean up resources."""
+        if self.context:
+            await self.context.close()
+        if self.playwright:
+            await self.playwright.stop()
+
+    async def upload_image(self, file_path, room):
+        if not os.path.exists(file_path):
+            print(f"❌ File not found: {file_path}")
+            return
+    
+        editor_page = next((p for p in self.context.pages if "editor" in p.url), None)
+        if not editor_page:
+            print("❌ Editor tab not found.")
+            return
+    
+        print(f"Uploading: {os.path.basename(file_path)}...")
+    
+        try:
+            # 1. Open Art Library & Upload Modal
+            await editor_page.evaluate('document.querySelector("#ui-id-2").click()')
+            await asyncio.sleep(0.5)
+            await editor_page.evaluate('document.querySelector("#userlibrary button.showuploaddialog").click()')
+            await asyncio.sleep(0.5)
+    
+            # 2. Trigger File Upload
+            async with editor_page.expect_file_chooser() as fc_info:
+                await editor_page.click('.file-uploader__dropzone')
+                file_chooser = await fc_info.value
+                await file_chooser.set_files(file_path)
+    
+            # 3. Wait for the upload overlay to vanish
+            await editor_page.wait_for_selector('.uploading', state='hidden', timeout=120000)
+            
+            # 4. Wait for the library UI to refresh
+            await asyncio.sleep(3) 
+            
+            # 5. Capture data directly from the DOM
+            first_item = editor_page.locator(".library-item.user").first
+            img_element = first_item.locator("img")
+            thumb_url = await img_element.get_attribute("src")
+            
+            if thumb_url:
+                clean_url = thumb_url.split('?')[0]
+                self.latest_upload_data = {
+                    "thumb": clean_url,
+                    "imgsrc": clean_url.replace("thumb.png", "max.png").replace("thumb.jpg", "max.jpg"),
+                    "id": "captured_from_ui"
+                }
+                room.image_json = self.latest_upload_data
+                room.imgsrc = self.latest_upload_data.get('thumb', '')
+                print(f"✅ Success! Captured: {os.path.basename(file_path)}")
+            else:
+                print("❌ Failed to find the uploaded image in the library UI.")
+    
+            # --- 6. CLOSE THE DIALOG ---
+            print("Closing upload dialog...")
+            # Try clicking the 'X' button in the dialog header first
+            close_button = editor_page.locator(".ui-dialog-titlebar-close").last
+            if await close_button.is_visible():
+                await close_button.click()
+            else:
+                # Fallback to Escape key if button isn't found
+                await editor_page.keyboard.press("Escape")
+            
+            # Brief wait to ensure the UI overlay is gone before next command
+            await asyncio.sleep(0.5)
+    
+        except Exception as e:
+            print(f"❌ Upload process failed: {e}")
+            # Emergency escape to attempt to clear the UI
+            await editor_page.keyboard.press("Escape")
+
+    async def get_recent_upload_data(self, room):
+        # 1. Define editor_page
+        editor_page = next((p for p in self.context.pages if "editor" in p.url), None)
+        if not editor_page:
+            print("❌ Editor tab not found.")
+            return
+    
+        try:
+            # 2. Click the Art Library Tab (specifically the 'a' tag)
+            # Roll20 tabs are an <ul> list; ui-id-2 is usually the Art Library
+            print("Opening Art Library...")
+            await editor_page.evaluate('document.querySelector("#ui-id-2").click()')
+            await asyncio.sleep(1) # Wait for the sidebar to swap views
+    
+            # 3. Target the specific "Recent Uploads" token path you identified
+            # Path: #recentuploads > ol > li:nth-child(1) > div.dd-content > div.token
+            recent_token_path = "#recentuploads > ol > li:nth-child(1) > div.dd-content > div.token"
+            token_element = editor_page.locator(recent_token_path)
+    
+            # 4. Wait for the specific token to be visible
+            await token_element.wait_for(state="visible", timeout=10000)
+    
+           # 5. Extract the attributes from the token and its child image
+            # The ID is usually on the div, but the URL is in the <img> src
+            asset_id = await token_element.get_attribute("data-itemid")
+            
+            # Target the nested <img> tag inside the token_element
+            img_element = token_element.locator("img")
+            img_src = await img_element.get_attribute("src")
+    
+            if img_src:
+                # Update your room object
+                room.image_json = {"id": asset_id, "imgsrc": img_src}
+                
+                # Clean the URL (remove the ?query string) and replace 'thumb' with 'max'
+                # Roll20 uses thumb.png for library icons, but max.png for the actual map image
+                clean_url = img_src.split('?')[0].replace('thumb', 'max')
+                room.imgsrc = clean_url
+                
+                print(f"✅ Successfully grabbed recent upload!")
+                print(f"Asset ID: {asset_id}")
+                print(f"URL: {clean_url}")
+            else:
+                print("❌ Token found, but no URL?")
+    
+        except Exception as e:
+            print(f"❌ Failed to click tab or find asset: {e}")
+
+    async def get_last_asset(self, room):
+        editor_page = next((p for p in self.context.pages if "editor" in p.url), None)
+        if not editor_page:
+            print("❌ Editor tab not found.")
+            return
+    
+        try:
+            # 1. Click Art Library Tab
+            await editor_page.click("#ui-id-2")
+            await asyncio.sleep(0.5)
+    
+            # 2. FORCE EXPAND "My Library" 
+            # In Roll20, your uploads are in a folder that might be collapsed.
+            # This clicks the folder name to ensure it's open.
+            my_library_folder = editor_page.locator(".user.root.library-folder > .folder-title")
+            if await my_library_folder.is_visible():
+                await my_library_folder.click()
+                await asyncio.sleep(1) # Wait for expansion animation
+    
+            # 3. Target the first item specifically inside the user library
+            # We use a more specific selector to ensure we aren't hitting a generic icon
+            last_item = editor_page.locator(".library-item.user").first
+            
+            # Wait specifically for the item to appear in the DOM
+            await last_item.wait_for(state="visible", timeout=10000)
+    
+            # 4. Extract Attributes
+            # data-fullsize is the most reliable for the high-res URL
+            img_src = await last_item.get_attribute("data-fullsize")
+            asset_id = await last_item.get_attribute("data-itemid")
+            
+            # Get thumbnail from the nested img tag
+            thumb_src = await last_item.locator("img").get_attribute("src")
+    
+            if img_src:
+                room.image_json = {
+                    "id": asset_id,
+                    "imgsrc": img_src,
+                    "thumb": thumb_src
+                }
+                # Clean URL: Roll20 URLs often have extra parameters; we want the clean one
+                room.imgsrc = thumb_src.split('?')[0] if thumb_src else img_src
+                
+                print(f"✅ Grabbed Asset: {asset_id}")
+                return True
+                
+        except Exception as e:
+            print(f"❌ Library Scraping Failed: {e}")
+            return False
+                    
+    async def send_chat(self, chat_message):
+        '''
+        This lets us send commands to API MODs
+        '''
+        # 1. Find the Roll20 Editor tab among your open pages
+        editor_page = next((p for p in self.context.pages if "editor" in p.url), None)
+        
+        if not editor_page:
+            print("❌ Editor tab not found. Make sure Roll20 is open.")
+            return
+    
+        # 2. Select the chat input textarea
+        # Force click the Chat Tab using JavaScript evaluation
+        await editor_page.evaluate('document.querySelector("a[href=\'#textchat\']").click()')
+        chat_input = editor_page.locator('#textchat-input textarea')
+    
+        # 3. Ensure it's ready and click/focus it
+        await chat_input.wait_for(state="visible")
+        await chat_input.click()
+    
+        # 4. Type the message
+        await chat_input.fill("") # Clear it first
+        await chat_input.type(chat_message)
+    
+        # 5. Press Enter to send
+        await editor_page.keyboard.press("Enter")
+        print(f"Sent to chat: {chat_message}")
+    
+    async def make_map(self, image_path, image_url, description, width=20, height=20):
+        '''
+        !map Room Name||URL||Width||Height||Description
+        '''
+        room_name = image_path.replace('Rooms/','').replace('.png','')
+        await self.send_chat(f'!map ||{room_name}||{image_url}||{width}||{height}||{description}')
+
 ##############
 # Enumerations
 ##############
