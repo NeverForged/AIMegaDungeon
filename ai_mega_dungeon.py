@@ -1028,49 +1028,59 @@ class AIMegaDungeon:
     def draw_room(self, room, show=True):
         '''
         Creates a mask and base image for AI to draw the room from
-        ''' 
-        inner_radius = 0.25  #in case of stairs
+        '''
+        MY_DPI = 70        
+        inner_radius = 0.25  # in case of stairs
         Diagonals = make_diagonals(room)
         fakeroom = make_fakeroom(room)
         borders = list(room.geometry_borders())
         wallborders = list(fakeroom.geometry_borders())
-        figsize, (xmin, xmax), (ymin, ymax) = get_figsize_from_wallborders(wallborders, dpi=70, pixels_per_unit=70, padding_units=0)
-        fig = plt.figure(figsize=figsize, dpi=70)
+        
+        # 1. FIX DIMENSIONS: Use 100 DPI for cleaner math, no padding here 
+        # because the 'fakeroom' wallborders already define the outer boundary.
+        figsize, (xmin, xmax), (ymin, ymax) = get_figsize_from_wallborders(wallborders, dpi=MY_DPI, pixels_per_unit=70, padding_units=1)
+        
+        
+        fig = plt.figure(figsize=figsize, dpi=100)
+        # 2. Add an axes that fills the literal 100% of the figure area
+        ax = fig.add_axes([0, 0, 1, 1])
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        ax.set_aspect('equal')
+        ax.axis('off')
+
         fig.set_facecolor('black')
-        plt.axes().set_aspect('equal', 'datalim')
-        plt.axis('off')
-        # mask the area white...
-        plt.fill(*zip(*make_contour(wallborders)), '#ffffff', alpha=1)
-        #plt.fill(*zip(*make_contour(borders)), '#ffffff')
-        #plt.fill(*zip(*make_contour(borders)), 'g', alpha=0.5
+
+        # --- DRAW MASK CONTENT ---
+        # Mask the area white...
+        ax.fill(*zip(*make_contour(wallborders)), '#ffffff', alpha=1, zorder=1)
+        
+        # Use EXACTLY these arguments to prevent Matplotlib from resizing
+        save_kwargs = {
+                'dpi': MY_DPI,
+                'bbox_inches': None,
+                'pad_inches': 0,
+                'transparent': False
+            }
        
-        # draw the walls...
         inner_wall_border_line = []
         if 'stairwell' in room.purpose.lower() and 'down' in room.purpose.lower():
             nborders = list(room.door_geometry_borders())
-            plt.fill(*zip(*make_contour(nborders)), '#ffffff')
+            ax.fill(*zip(*make_contour(nborders)), '#ffffff', zorder=2)
             for border in nborders:
-                inner_wall_border_line.append(plt.plot(*zip(*border), color='k', linewidth=2, alpha=1))
+                inner_wall_border_line.append(ax.plot(*zip(*border), color='k', linewidth=2, alpha=1, zorder=3))
         else:
             for border in borders:
-                inner_wall_border_line.append(plt.plot(*zip(*border), color='k', linewidth=2, alpha=1))
+                inner_wall_border_line.append(ax.plot(*zip(*border), color='k', linewidth=2, alpha=1, zorder=3))
+        
         for border in wallborders:
-             inner_wall_border_line.append(plt.plot(*zip(*border), color='k', linewidth=25, alpha=1.0))
+             inner_wall_border_line.append(ax.plot(*zip(*border), color='k', linewidth=25, alpha=1.0, zorder=4))
 
         for coords in Diagonals:
-            x = [coord[0] for coord in coords]
-            y = [coord[1] for coord in coords]
-            inner_wall_border_line.append(plt.plot(x, y, color='k',linewidth=2, alpha=1.0))
-        if 'stairwell' in room.purpose.lower() and 'down' in room.purpose.lower():
-            ax = plt.gca()
-            x_lims = ax.get_xlim()
-            y_lims = ax.get_ylim()
-            inner_wall_border_line.append(ax.plot([x_lims[0], x_lims[1]], [y_lims[1], y_lims[0]], 
-                                            color='black', linewidth=2, zorder=10))
-            inner_wall_border_line.append(ax.plot([x_lims[0], x_lims[1]], [y_lims[0], y_lims[1]], 
-                                            color='black', linewidth=2, zorder=10))
-             
-        # add gridlines
+            x, y = zip(*coords)
+            inner_wall_border_line.append(ax.plot(x, y, color='k', linewidth=2, alpha=1.0, zorder=3))
+
+         # add gridlines
         for border in room.grid_borders():
             plt.plot(*zip(*border), color='k', linewidth=1, alpha=0.5)
 
@@ -1100,22 +1110,11 @@ class AIMegaDungeon:
                 xlst = [x+frames[0]-ddx,x+frames[1]+ddx,x+frames[2]+ddx,x+frames[3]-ddx,x+frames[4]-ddx]
                 ylst = [y,y,y-0.5-ddy,y-0.5-ddy,y]
             if 'secret' not in door.door_type.lower():
-                plt.plot(xlst,ylst,color='k', linewidth=2, alpha=1)
+                ax.plot(xlst,ylst,color='k', linewidth=2, alpha=1, zorder=5)
 
-        # add central pillar for stairwell
-        if 'stairwell' in room.purpose.lower():
-            # Get the room center and bounds
-            ax = plt.gca()
-            xmin, xmax = ax.get_xlim()
-            ymin, ymax = ax.get_ylim()
-            center_x, center_y = (xmin + xmax) / 2, (ymin + ymax) / 2
-            # Add pillar to the mask...
-            pillar = plt.Circle((center_x, center_y), inner_radius, color='k', zorder=5)
-            ax.add_patch(pillar)
-            # blue lines for doors
-
-        # Save the MASK
-        plt.savefig(self.file_path('mask.png'), transparent=False, facecolor='white', bbox_inches=None, dpi=70) 
+        # 3. SAVE MASK: No bbox_inches='tight'!
+        mask_path = self.file_path('mask.png')
+        fig.savefig(self.file_path('mask.png'), facecolor='black', **save_kwargs)
 
         for line in inner_wall_border_line:
             line[0].remove()
@@ -1261,6 +1260,13 @@ class AIMegaDungeon:
         
         plt.savefig(self.file_path("room.png".format(room.room_id, room.parent.info['level'])), dpi=300, bbox_inches='tight')
         if show == True:
+            plt.show()
+        fig.savefig(self.file_path('room.png'), **save_kwargs)
+        
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
             plt.show()
     
     def render_room(self, room, show=True, showog=False):
@@ -1771,7 +1777,7 @@ class Roll20Automator:
     
         # 4. Type the message
         await chat_input.fill("") # Clear it first
-        await chat_input.type(chat_message)
+        await chat_input.fill(chat_message)
     
         # 5. Press Enter to send
         await editor_page.keyboard.press("Enter")
@@ -1782,7 +1788,8 @@ class Roll20Automator:
         !map Room Name||URL||Width||Height||Description
         '''
         room_name = image_path.replace('Rooms/','').replace('.png','')
-        await self.send_chat(f'!map ||{room_name}||{image_url}||{width}||{height}||{description}')
+        
+        await self.send_chat(f'!map ||{room_name}||{image_url}||{int(width/70)}||{int(height/70)}||{description.replace('\n','|n').replace('\r', '|n')}')
 
 ##############
 # Enumerations
@@ -1994,45 +2001,24 @@ def make_diagonals(room):
 
     return diagonals    
  
-def get_figsize_from_wallborders(wallborders, dpi=100, pixels_per_unit=80, padding_units=1):
-    """
-    Calculate matplotlib figsize from wallborders coordinates.
-    
-    Args:
-        wallborders:     List of line segments defining the outer walls
-        dpi:             DPI for the figure
-        pixels_per_unit: How many pixels per grid unit
-        padding_units:   Extra units of black border around the room (the "mask" area)
-    
-    Returns:
-        figsize: (width, height) in inches for plt.figure()
-        xlim:    (xmin, xmax) for plt.xlim()
-        ylim:    (ymin, ymax) for plt.ylim()
-    """
-    # Flatten all points from all segments
+def get_figsize_from_wallborders(wallborders, dpi=70, pixels_per_unit=70, padding_units=1):
     all_points = [pt for segment in wallborders for pt in segment]
     xs = [p[0] for p in all_points]
     ys = [p[1] for p in all_points]
 
-    xmin, xmax = min(xs), max(xs)
-    ymin, ymax = min(ys), max(ys)
+    # If room is 8x8, xmax-xmin = 8
+    xmin, xmax = min(xs) - padding_units, max(xs) + padding_units
+    ymin, ymax = min(ys) - padding_units, max(ys) + padding_units
 
-    # Add padding for the black border around the room
-    xmin -= padding_units
-    xmax += padding_units
-    ymin -= padding_units
-    ymax += padding_units
+    x_units = xmax - xmin # This should be 10
+    y_units = ymax - ymin # This should be 10
 
-    x_units = xmax - xmin
-    y_units = ymax - ymin
-
-    width_px  = x_units * pixels_per_unit
-    height_px = y_units * pixels_per_unit
-
-    figsize = (width_px / dpi, height_px / dpi)
+    # 10 units * 70 px/unit = 700px
+    # 700px / 70 dpi = 10 inches
+    figsize = (x_units * pixels_per_unit / dpi, y_units * pixels_per_unit / dpi)
 
     return figsize, (xmin, xmax), (ymin, ymax)
-
+    
 def get_start_angle(room, direction, center_x, center_y, xx, yy):
     # Calculate door position relative to your specific center
     dx = xx - center_x
@@ -2580,106 +2566,82 @@ class Room():
         # find extreme borders...
         max_x, max_y = borders[0].position.point()
         min_x, min_y = borders[0].position.point()
-        max_x_num, max_y_num, min_x_num, min_y_num = 0, 0, 0, 0
         min_distance_to_center = 90001
         
-        for border in borders:
-            x, y = border.position.point()
-            if x < min_x:
-                min_x = x
-                min_x_num = 0
-            elif x > max_x:
-                max_x = x
-                max_x_num = 0
-            if y < min_y:
-                min_y = y
-                min_y_num = 0
-            elif y > max_y:
-                max_y = y
-                max_y_num = 0
-                
-            if x == max_x:
-                max_x_num += 1
-            elif x == min_x:
-                min_x_num += 1
-            if y == max_y:
-                max_y_num += 1
-            elif y == min_y:
-                min_y_num += 1
-            distance_to_center = get_distance((0,0), (x,y))
-            if distance_to_center < min_distance_to_center:
-                min_distance_to_center = distance_to_center
-                 
+        
+        # Get the min/max
+        x_lst = [border.position.point()[0] for border in borders]
+        y_lst = [border.position.point()[1] for border in borders]
+        
+        max_x = max(x_lst)
+        min_x = min(x_lst)
+        max_y = max(y_lst)
+        min_y = min(y_lst)    
         mid_x = int((max_x + min_x)/2)
         mid_y = int((max_y + min_y)/2)
-        check_xy = max(min_x_num, max_x_num, min_y_num, min_x_num) + 1
         
-        # add extreme borders to list for more liklyhood of choice
-        temp = [border for border in self.borders() if not border.internal]
-        if t_pass:
-            temp = []
+        check_borderx = []
+        check_bordery = []
+        
+        #large rooms/long hallways
+        if max_x - min_x >= 12:
+            check_borderx.append(mid_x + int(mid_x/2))
+            check_borderx.append(mid_x - int(mid_x/2))
+        if max_y - min_y >= 12:
+            check_bordery.append(mid_y + int(mid_y/2))
+            check_bordery.append(mid_y - int(mid_y/2))
             
+        if self.hallway == True:
+            check_borderx.append(min_x)
+            check_borderx.append(max_x)
+            check_bordery.append(min_y)
+            check_bordery.append(max_y)
+        
+        if mid_x%2 == 0:
+            check_borderx.append(mid_x+1)
+        if mid_y%2 == 0:
+            check_bordery.append(mid_y+1)
+        check_bordery.append(mid_y)
+        check_borderx.append(mid_x)
+            
+        valid_borders = []
         for border in borders:
             x, y = border.position.point()
-
-            if x == max_x:
-                [temp.append(border) for _ in range(check_xy-max_x_num)]
-                if t_pass:
-                    [temp.append(border) for _ in range(check_xy)]
-            elif x == min_x:
-                [temp.append(border) for _ in range(check_xy-min_x_num)]
-                if t_pass:
-                    [temp.append(border) for _ in range(check_xy)]
-            
-            if y == max_y:
-                [temp.append(border) for _ in range(check_xy-max_y_num)]
-                # t-passage ends should have it...
-                if t_pass:
-                    [temp.append(border) for _ in range(check_xy)]
-            elif y == min_y:
-                [temp.append(border) for _ in range(check_xy-min_y_num)]
-                if t_pass:
-                    [temp.append(border) for _ in range(check_xy)]
-            
-            if not t_pass: # middle sections
-                if x >= mid_x-1 and x <= mid_x + 1 and y <= max_y-1 and y >= min_y+1:
-                    [temp.append(border) for _ in range(int(check_xy))]
-                if y >= mid_y - 1 and y >= mid_y+1 and x <= max_x-1 and x >= min_x+1:
-                    [temp.append(border) for _ in range(int(check_xy))]
-
+            # we want ends of hallways and middle of rooms
+            if ((x in check_borderx or y in check_bordery) and self.hallway == False) or (self.hallway and x in check_borderx and y in check_bordery):
+                valid_borders.append(border)
             # lets try to make sure the dungeon centers...   
-            if get_distance((0,0), (x,y)) >= min_distance_to_center+1 and not t_pass:
-                [temp.append(border) for _ in range(int(check_xy))]
-
+            if get_distance((0,0), (x,y)) >= min_distance_to_center+1 and border in valid_borders:
+                valid_borders.append(border)
+            if (x == max_x or y ++ max_y) and self.hallway and border in valid_borders:
+                for _ in range(3):  #we want ends of hallways to have doors, otherwise why?
+                    valid_borders.append(border)
 
         neighbors = set()
         directions = set()
-        attempts = 0
 
-        while len(self.doors) < number and attempts <= len(borders):
-            border = random.sample(borders, 1)[0]
+        while len(self.doors) < number and len(valid_borders) > 0:
+            border = random.sample(valid_borders, 1)[0]
             check_position = border.position
             check_direction = border.direction
-            okay = True
-            
-            if check_position in neighbors:  #borders an existing door
-                okay = False
-            elif len(list(directions)) < 4 and check_direction in directions and not t_pass:  #same wall...
-                okay = False
-            if okay == True:
-                neighbors.add(check_position)
+            # want 1 per wall unless we have a lot...
+            if len(list(directions)) > 4 or check_direction not in directions:
                 border.can_has_door = True
                 door = Door(parent=self)
                 door.borders.append(border)
                 door.rooms.append(self)
                 border.door = door
                 self.doors.append(door)
-                neighbors.update(border.position.area())
-                directions.add(check_direction)
-                if trapped == True:
-                    door.trapped = True
-            attempts += 1
-                      
+                for i in range(3):
+                    for j in range(3):
+                        neighbors.add((check_position.point()[0]+i-1, check_position.point()[1]+j-1))
+            else:  # remove it, even though it could be valid later... [prevent infinite loop]
+                neighbors.add(check_position.point()) 
+            valid_borders = [a for a in valid_borders if a.position.point() not in neighbors]
+            directions.add(check_direction)
+            if trapped == True:
+                door.trapped = True        
+                               
     def make_circle(self, diameter):
         '''
         Starts a circle from the firs position...
@@ -2715,7 +2677,7 @@ class Room():
     def make_tpassage(self):
         '''
         Passage extending 10 ft., then T intersection extending 10 ft. to the right and left
-        '''
+        
         direction = random.randint(1,4)
         x = 1
         y = 1
@@ -2737,6 +2699,9 @@ class Room():
                     for block in self.blocks:
                         block.sync_borders_with(new_block)
                     self.blocks.append(new_block)
+        '''
+        # AI can't draw these to save its life... so simplifying to a hallway
+        self.make_rectangle(10,rand.randint(9,12)*5,hallway=True)
   
     def clear_room(self, clear_all = True):
         
@@ -2752,8 +2717,7 @@ class Room():
             self.color = 'gray'
         self.description = ''
         self.quest = ''
-        
-        
+            
     def stock_room(self, hallway=False):
         '''
         '''
@@ -2985,12 +2949,22 @@ class Dungeon():
         
             for border in room.grid_borders():
                 plt.plot(*zip(*border), color=room.color, linewidth=1, alpha=0.5)
+            
+            # room labels...
+            xset = set()              
+            yset = set()
+            for lst in borders:
+                for tup in lst:
+                    xset.add(tup[0])
+                    yset.add(tup[1])
+            x = (max(xset)+min(xset))/2
+            y = (max(yset)+min(yset))/2
+            plt.text(x, y, f"[{room.room_id}]", fontsize=8)
         
         for room in self.rooms:
             for door_border in room.door_borders():
                 plt.plot(*zip(*door_border.geometry_borders()), color='b', linewidth=6, alpha=0.75)
             
-
         for corridor in self.corridors:
             plt.plot(*zip(*corridor.geometry_segments()), color='#000000', linewidth=1, alpha=1)
 
@@ -3288,7 +3262,8 @@ class Dungeon():
     def remove_door(self, door):
         #corridor removal...
         for cor in [corridor for corridor in self.corridors if corridor.start_border in door.borders and corridor.stop_border in door.borders]:
-            self.corridors.pop(self.corridors.index(cor))
+            # self.corridors.pop(self.corridors.index(cor))
+            self.corridors = [a for a in self.corridors if a != cor]
             del cor
         # clear borders
         for border in door.borders:
@@ -3296,47 +3271,46 @@ class Dungeon():
             border.can_has_door = False
             border.door = None
         for room in door.rooms:
-            room.doors.pop(room.doors.index(door))
+            room.doors = [a for a in room.doors if a is not door]
         del door
     
     def connect_free_doors(self, threshold):
         # Connect to doors near rooms...
-        for new_room in [room for room in self.rooms if len(room.blocks)>4]:
-            nr_borders = []
-            for block in new_room.blocks:
-               for border in block.borders.values():
-                   if border not in nr_borders and border.internal == False and border.can_has_door == False:
-                       nr_borders.append(border)
-            # only check rooms that are bigger than stairwells, are not the room itself... may add another room
-            for other_room in [room for room in self.rooms if room != new_room and len(room.blocks)>4]:
-                add_lst = []
-                for door in [door for door in other_room.doors if len(door.borders) == 1]:
-                    ddir = door.borders[0].mirror().direction
-                    for nborder in nr_borders:
-                        if get_distance(door.borders[0].position.point(), nborder.position.point()) <= threshold and nborder.direction == ddir:
-                            add_lst.append((get_distance(door.borders[0].position.point(),border.position.point()), nborder, door))          
-                if len(add_lst) >= 1:
-                    add_lst.sort(key=lambda x: x[0])
-                    new_door = add_lst[0]
-                    new_door[2].rooms.append(new_room)
-                    new_door[2].borders.append(new_door[1])
-                    new_room.doors.append(new_door[2])
-                    new_door[1].can_has_door = True
-                    new_door[1].door = new_door[2]
-                    corridor_path = simple_path(new_door[1].mirror().position.point(),
-                                               new_door[2].borders[0].mirror().position.point())
-                    self.corridors.append(Corridor(new_door[1], new_door[2].borders[0], corridor_path))
-
-            # remove bad doors
-            rmlst = []
-            for door in new_room.doors:
-                if len(door.rooms) == 2:
-                    for droom in door.rooms:
-                        if droom != new_room:
-                            if droom in rmlst:
-                                self.remove_door(door)
-                            else:
-                                rmlst.append(droom)
+        doors = self.get_free_doors()
+        for door in doors.copy():
+            if door in doors:  #we are removing doors we find
+                find_direction = door.borders[0].mirror().direction
+                dborder = door.borders[0]
+                droom = door.rooms[0]
+                # check the doors
+                tborder = None
+                nroom = None
+                mthreshold = threshold + 0.0001
+                for ndoor in doors:
+                    if ndoor is not door and len(ndoor.borders) == 1 and ndoor.borders[0].direction == find_direction:
+                        if get_distance(door.borders[0].position.point(), ndoor.borders[0].position.point()) <= mthreshold:
+                            mthreshold = get_distance(door.borders[0].position.point(), ndoor.borders[0].position.point()) # make sure none are better
+                            tborder = ndoor.borders[0]
+                            nroom = ndoor.parent
+                            # remove door from parent and list
+                            self.remove_door(ndoor)
+                if tborder is None:  #check hallways
+                    for room in [room for room in self.rooms]:
+                        for border in [border for border in room.borders() if border.direction == find_direction and border.internal == False]:
+                            if dborder not in [a for a in room.borders()] and get_distance(dborder.position.point(), border.position.point()) <= mthreshold:
+                                mthreshold = get_distance(dborder.position.point(), border.position.point())
+                                tborder = border
+                                nroom = room
+                if tborder is not None:
+                    # we have a connection...
+                    door.borders.append(tborder)
+                    tborder.can_has_door = True
+                    nroom.doors.append(door)
+                    door.rooms.append(nroom)
+                    doors = [a for a in doors if a != door]
+                    corridor_path = simple_path(door.borders[0].position.point(),
+                                                door.borders[1].position.point())
+                    self.corridors.append(Corridor(door.borders[0], door.borders[1], corridor_path))
     
     def add_area(self):
         '''
@@ -3367,7 +3341,7 @@ class Dungeon():
                     new_room = self.create_tpassage(3)
                 elif d20 > 2 and d20 <= 8:
                     # Passage 20 ft. straight ahead
-                    new_room = self.create_rectangle_room(10*random.randint(2,10),10,random.randint(3,4))
+                    new_room = self.create_rectangle_room(10*random.randint(4,10),10,random.randint(3,4))
                 elif d20 >= 9 and d20 <= 18:
                     # Chamber
                     nd20 = random.randint(1,20)
