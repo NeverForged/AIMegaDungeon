@@ -6,7 +6,7 @@
 
 \### THE UNDERWORLD
 
-\#### From \_\*VOLUME 3:\* THE UNDERWORLD \& WILDERNESS ADVENTURES\_ BY GARY GYGAX \& DAVE ARNESON
+\#### From \*VOLUME 3: THE UNDERWORLD \& WILDERNESS ADVENTURES\* BY GARY GYGAX \& DAVE ARNESON
 
 Before it is possible to conduct a campaign of adventures in the mazey dungeons, it is necessary for the referee to sit down with pencil in hand and draw these is necessary of the terere to sit down w t dealo labyrinths on graph paper. Unquestionably this will require a great deal of time and effort and imagination. The dungeons should look something like the ex- and offortae chould ample given below, with numerous levels which sprawl in all directions, not necessarily stack neatly above each other in a straight line.
 
@@ -46,7 +46,7 @@ In beginning a dungeon it is advisable to construct at least three levels at onc
 
 \-- uses a real world calendar, but a fantasy calendar could be implemented
 
-\- Discord: bot.py is an attempt to make a Discord Bot that loads the Dungeon and interacts with it, with various commands to allow a playstyle of switching DMs. 
+\- Discord: bot.py is an attempt to make a Discord Bot that loads the Dungeon and interacts with it, with various commands to allow a playstyle of switching DMs.
 
 \- AIgaDungeon.js is an API MOD for Roll20 that this code can interact with and edit the current room for new rooms you travel to, and puts the encounter script in a handout under GMNotes.
 
