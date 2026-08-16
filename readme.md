@@ -1,18 +1,24 @@
 \# AIMegaDungeon
 
-\## \_An Appendix A Randomized Dungeon Maker\_
+
+
+\## \*An Appendix A Randomized Dungeon Maker\*
 
 
 
 \### THE UNDERWORLD
 
+
+
 \#### From \*VOLUME 3: THE UNDERWORLD \& WILDERNESS ADVENTURES\* BY GARY GYGAX \& DAVE ARNESON
 
-Before it is possible to conduct a campaign of adventures in the mazey dungeons, it is necessary for the referee to sit down with pencil in hand and draw these is necessary of the terere to sit down w t dealo labyrinths on graph paper. Unquestionably this will require a great deal of time and effort and imagination. The dungeons should look something like the ex- and offortae chould ample given below, with numerous levels which sprawl in all directions, not necessarily stack neatly above each other in a straight line.
+
+
+Before it is possible to conduct a campaign of adventures in the mazey dungeons, it is necessary for the referee to sit down with pencil in hand and draw these labyrinths on graph paper. Unquestionably this will require a great deal of time and effort and imagination. The dungeons should look something like the example given below, with numerous levels which sprawl in all directions, not necessarily stack neatly above each other in a straight line.
 
 
 
-In beginning a dungeon it is advisable to construct at least three levels at once, noting where stairs, trap doors (and chimneys) and slanting passages come on lower levels, as well as the mouths of chutes and teleportation terminals. In doing the lowest level of such a set it is also necessary to leave space for the th various methods of egress to still lower levels. \*\*A good dungeon will have no less than a dozen levels down, with offshoot levels in addition, and new levels under construction so that players will never grow tired of it.\*\* There is no real limit to the construction so that players will never grow tired of it. There is ho real limit to the number of levels, nor is there any restriction on their size (other than the size of o s tn size etits7e graph paper available). "Greyhawk Castle", for example, has over a dozen levels in succession downwards, more than that number branching from these, and not inn donr thats less than two new levels under construction at any given time. These levels contain such things as a museum from another age, age, ana underground lake, aa sseries of caverns filled with giant fungi, a bowling alley for 20' high Giants, an arena of evil, crypts, and so on.
+In beginning a dungeon it is advisable to construct at least three levels at once, noting where stairs, trap doors (and chimneys) and slanting passages come on lower levels, as well as the mouths of chutes and teleportation terminals. In doing the lowest level of such a set it is also necessary to leave space for the various methods of egress to still lower levels. \*\*A good dungeon will have no less than a dozen levels down, with offshoot levels in addition, and new levels under construction so that players will never grow tired of it.\*\* There is no real limit to the number of levels, nor is there any restriction on their size (other than the size of graph paper available). "Greyhawk Castle", for example, has over a dozen levels in succession downwards, more than that number branching from these, and not less than two new levels under construction at any given time. These levels contain such things as a museum from another age, an underground lake, a series of caverns filled with giant fungi, a bowling alley for 20' high Giants, an arena of evil, crypts, and so on.
 
 
 
