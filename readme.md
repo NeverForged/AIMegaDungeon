@@ -19,8 +19,10 @@ In beginning a dungeon it is advisable to construct at least three levels at onc
   - Passages are randomized in length
 - Appendix A is used to 'stock' the dungeon, with AI used to write encounters and roll on treasure tables (copying the DMG treasure and magic item tables is tedious)
   - Encounters are supplied with 3 rounds of enemy strategy, to make this as headless-friendly as possible
-  - CR of encounters is randomized to be 1d3+1 per level away from the first level. This makes things harder as you go down, but allows you to start at level 1 and have fun.
-- Rooms can be rendered using AI Art to create cinematic, walls-visible room layouts for battle maps or narrational use.
+  - CR of encounters is randomized to be 1d3+1 per level away from the first level. This makes things harder as you go down, but allows you to start at level 1 and have fun.\
+  - Staged encounters include a timer
+  - All encounters include an OSR Reaction Roll to determine how the monsters react to the players
+- Rooms are rendered using AI Art to create cinematic, walls-visible room layouts for battle maps or narrational use.
 - NetworkX was used so that pathing may be calculated for spells/tracking
 - A datetime system is in place to track time, as Gygax said "YOU CAN NOT HAVE A MEANINGFUL CAMPAIGN IF STRICT TIME RECORDS ARE NOT KEPT"
   - The system allows timers to be stored and updated

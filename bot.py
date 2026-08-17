@@ -3,7 +3,7 @@ import discord
 import matplotlib
 matplotlib.use('Agg')
 from dotenv import load_dotenv
-from ai_mega_dungeon import AIMegaDungeon
+from ai_mega_dungeon import AIMegaDungeon, Roll20Automator
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -14,6 +14,9 @@ intents.message_content = True  # Enable the bot to read message content
 client = discord.Client(intents=intents)
 
 aimd = AIMegaDungeon(keys=os.getenv('AI_TOKENS'))
+print(os.getenv('AI_TOKENS'))
+
+r20 = False
 
 def get_numbers(my_string):
     numbers_only_str = ''
@@ -41,6 +44,7 @@ async def on_message(message):
         return
     #### have it read messages and add functions
     #### Best to dev the dungeon out in a Jupyter Notebook, save it, and load it here.
+    
     
     ## $load
     if message.content.startswith('$load'):
@@ -77,6 +81,17 @@ async def on_message(message):
         aimd.save(filename=gname)
         await message.channel.send('{} Saved.'.format(gname))
         return
+        
+    # $roll20
+    if message.content.startswith('$roll20'):
+        roll20 = Roll20Automator()
+        r20 = True
+        await message.channel.send('''--- MANUAL STEPS ---
+1. In the browser window, go to Roll20.net and log in.
+2. Launch your game: 
+3. Once the map is loaded, come back here to run your upload. ''')
+        await roll20.connect()
+        
         
     # $quests     
     if message.content.startswith('$quests'):

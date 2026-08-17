@@ -29,6 +29,7 @@ import matplotlib.path as mpath
 import matplotlib.patches as patches
 from matplotlib.patches import Polygon
 from dateutil.relativedelta import relativedelta
+from playwright.async_api import async_playwright
 from IPython.display import display, Image as IPImage
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
@@ -639,10 +640,18 @@ class AIMegaDungeon:
                 room_desc_basic = room_desc_basic + '\nDoors: \n{}'.format('\n'.join(doors))
             if room.monster != '':   # AI CALL
                 if '[Rolled]' not in room.monster:
+                    # add dungeon description
+                    df = self.levelsdf[self.levelsdf['level']==room.parent.level]
+                    
+                    # reaction roll
+                    
+                    
                     prompt = 'Write a {} Encounter: Create a Medium CR {} encounter based around {}\n'.format(self.game, CR, room.monster)
+                    prompt = prompt + '    - This encounter takes place on a level of thedungeon known as {} which is described as: {}'.format(df['name'].values[0],df['description'].values[0])
                     prompt = prompt + '    - Be sure to include a basic outline of combat strategy, as if you were the author of "The Monsters Know What They Are Doing", for the first 3 rounds of combat, including surrender conditions/motivations\n'
                     prompt = prompt + '    - Inclue any note on roleplay for the creatures.\n'
                     prompt = prompt + "    - Include the numbers of creatures, and adjust fro 4-6 characters"
+                    prompt = prompt + "    - The monsters reaction to the players entering is: {}".format(monster_reaction())
                     prompt = prompt + '''    - Add an Esculation Clock appropriate to the room and encounter 
                     [Esculation Clocks track hazards (volcano eruptions, crumbling floors), NPC actions (guards arriving), or environmental changes (tide changes, magic fading)
                     The Escalation Clock Pattern
@@ -736,10 +745,14 @@ class AIMegaDungeon:
                 if sum(self.levelsdf['level']==level-1) == 1:
                     level = level -1
             if monster != '':
-                prompt = 'The party is currently {} in a room described as: {}.\n'.format(party_is, room.purpose)
+                # get some info...
+                df = self.levelsdf[self.levelsdf['level']==room.parent.level]
+                
+                prompt = 'The party is currently {} in a room described as: {}.  The room is on a level of the dungeon known as {} which is described as {}\n'.format(party_is, room.purpose, df['name'].values[0], df['description'].values[0])
                 prompt = prompt + '\n\nWrite a {} Random Encounter: Create a Medium CR {} encounter based around {} entering the area\n\n'.format(self.game, CR,monster)
                 prompt = prompt + '    - Be sure to include a basic outline of combat strategy, as if you were the author of "The Monsters Know What They Are Doing", for the first 3 rounds of combat, including surrender conditions/motivations\n'
                 prompt = prompt + '    - Inclue any note on roleplay for the creatures.\n'
+                prompt = prompt + "    - The monsters reaction to encountering the players is: {}".format(monster_reaction(-1))
                 prompt = prompt + '\n\nInclude the CR, HP, AC, and lookup information (book, pg number) for each monster\n\n'
                 if room.description == '':
                     doors = []
@@ -998,9 +1011,8 @@ class AIMegaDungeon:
         return self.npcs[name.lower()]
     
     ## AI CALLS & TOOLS
-    def get_chat_response(self, prompt, role="You are a helpful assistant.", model="google/gemini-2.0-flash-001"):
-        # Create the client pointing to OpenRouter
-        
+    def get_chat_response(self, prompt, role="You are a helpful assistant.", model="google/gemini-2.5-flash"):
+        print(model)
         prompt = prompt + '''
         
         Constraint: Do not acknowledge this request. Do not provide introductions, conclusions, or multiple options unless 
@@ -1017,10 +1029,9 @@ class AIMegaDungeon:
                 {"role": "system", "content": role},
                 {"role": "user", "content": prompt}
             ],
-            # OpenRouter-specific headers (Optional but recommended)
             extra_headers={
-                "HTTP-Referer": "https://your-site-url.com", # Optional
-                "X-Title": "AI Mega Dungeon", # Optional
+                "HTTP-Referer": "https://github.com",
+                "X-Title": "AI Mega Dungeon",
             }
         )
         return response.choices[0].message.content
@@ -1807,6 +1818,32 @@ class DIRECTION(enum.Enum):
 #######
 # Utils
 #######
+
+def monster_reaction(modifier = 0):
+    '''
+    old school monster reaction table
+    
+    2d6	Result
+    2 or less	Attacks
+    3–5	Hostile, may attack
+    6–8	Unsure, confused, cautious
+    9–11	Indifferent, may negotiate
+    12 or more	Eager, friendly
+    '''
+    roll = random.randint(1,6)
+    roll = roll + random.randint(1,6) #seperated to avoid the same seed
+    roll = roll + modifier
+    
+    if roll <= 2:
+        return 'The Monsters Attack the Players'
+    elif roll >= 3 and roll <= 5:
+        return 'They are Hostile, may attack'
+    elif roll >= 6 and roll <= 8:
+        return 'They are Unsure, confused, cautious'
+    elif roll >= 9 and roll <= 11:
+        return 'They are Indifferent, may negotiate'
+    elif roll >=12:
+        return 'They are Eager, friendly'
 
 def points_at_circle(x, y, radius):
     points = set()
