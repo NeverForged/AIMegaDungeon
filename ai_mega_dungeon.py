@@ -12,6 +12,7 @@ import pickle
 import base64
 import openai
 import random
+import asyncio
 import requests
 import warnings
 import jsonpickle
@@ -290,7 +291,7 @@ class AIMegaDungeon:
                                 'Revenge seeker'
                                 'Raving lunatic'])
                 captive = random.sample(patrons,1)[0]
-                prompt = 'I need a name and brief description (gender, race) for a single {}. This is for dungeons and dragons.  Format should be Name (gnder, race, single detail)'.format(captive)
+                prompt = 'I need a name and brief description (gender, race) for a single {}. This is for {}.  Format should be Name (gnder, race, single detail)'.format(captive, self.game)
                 captive_name = self.get_chat_response(prompt)
             if 'inhabitants' in goal or 'villain' in goal or 'captive' in goal:
                 monster = random.sample(self.levelsdf[self.levelsdf['level'] == floor]['Monster (dominant inhabitant)'].values[0].split('|'),1)[0]
@@ -660,7 +661,8 @@ class AIMegaDungeon:
                         The Payload (The "Snap"): Define a significant mechanical shift that occurs when the clock hits zero. It must either damage the players, block an path, or add new threats. It should change the "win condition" of the room.]\n
                         Payload should not add architecture.
                     '''
-                    prompt = prompt + '\n\nInclude the CR, HP, AC, and lookup information (book, pg number) for each monster\n\n'
+                    prompt = prompt + 'Use the minimum words needed to convey the info above for eas of use at the table.'
+                    prompt = prompt + '\n\nInclude the statblocks and lookup information (book, pg number) for each monster\n\n'
                     prompt = prompt + '\n\nRoom Description: {} [{}]'.format(room.purpose, room.state)
                     prompt = prompt + '    - room is {} square feet'.format(5*len(room.blocks))
                     prompt = prompt + '\n    Doors: \n{}'.format('        \n'.join(doors))
@@ -675,7 +677,7 @@ class AIMegaDungeon:
             if room.treasure != '':  # Potential AI Call
                 if ('art' in room.treasure or 'Table' in room.treasure or 'gems' in room.treasure) and '[Rolled]' not in room.treasure :
                     prompt = 'Roll on the appropriate d&d 5e 2024 tables and write details (gem types for gems, art description for art, etc.) for the following treasure: {}'.format(room.treasure)
-                    treasure_rolls = self.get_chat_response(prompt, role='You are a talented Quest Writer for D&D 5e 2024')
+                    treasure_rolls = self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(self.parent.parent.game))
                     room.treasure = '[Rolled] ' + room.treasure + '\n\n' + treasure_rolls
                     room_desc_basic = room_desc_basic + '\nTreasure: ' + room.treasure
                 else: 
@@ -753,7 +755,8 @@ class AIMegaDungeon:
                 prompt = prompt + '    - Be sure to include a basic outline of combat strategy, as if you were the author of "The Monsters Know What They Are Doing", for the first 3 rounds of combat, including surrender conditions/motivations\n'
                 prompt = prompt + '    - Inclue any note on roleplay for the creatures.\n'
                 prompt = prompt + "    - The monsters reaction to encountering the players is: {}".format(monster_reaction(-1))
-                prompt = prompt + '\n\nInclude the CR, HP, AC, and lookup information (book, pg number) for each monster\n\n'
+                propmt = prompt + "Use as few wrods as possible to convey this information"
+                prompt = prompt + '\n\nInclude the statblock and lookup information (book, pg number) for each monster\n\n'
                 if room.description == '':
                     doors = []
                     for door in [door for door in room.doors if 'Secret' not in door.door_type]:
@@ -1600,171 +1603,7 @@ class Roll20Automator:
             await self.context.close()
         if self.playwright:
             await self.playwright.stop()
-
-    async def upload_image(self, file_path, room):
-        if not os.path.exists(file_path):
-            print(f"❌ File not found: {file_path}")
-            return
-    
-        editor_page = next((p for p in self.context.pages if "editor" in p.url), None)
-        if not editor_page:
-            print("❌ Editor tab not found.")
-            return
-    
-        print(f"Uploading: {os.path.basename(file_path)}...")
-    
-        try:
-            # 1. Open Art Library & Upload Modal
-            await editor_page.evaluate('document.querySelector("#ui-id-2").click()')
-            await asyncio.sleep(0.5)
-            await editor_page.evaluate('document.querySelector("#userlibrary button.showuploaddialog").click()')
-            await asyncio.sleep(0.5)
-    
-            # 2. Trigger File Upload
-            async with editor_page.expect_file_chooser() as fc_info:
-                await editor_page.click('.file-uploader__dropzone')
-                file_chooser = await fc_info.value
-                await file_chooser.set_files(file_path)
-    
-            # 3. Wait for the upload overlay to vanish
-            await editor_page.wait_for_selector('.uploading', state='hidden', timeout=120000)
-            
-            # 4. Wait for the library UI to refresh
-            await asyncio.sleep(3) 
-            
-            # 5. Capture data directly from the DOM
-            first_item = editor_page.locator(".library-item.user").first
-            img_element = first_item.locator("img")
-            thumb_url = await img_element.get_attribute("src")
-            
-            if thumb_url:
-                clean_url = thumb_url.split('?')[0]
-                self.latest_upload_data = {
-                    "thumb": clean_url,
-                    "imgsrc": clean_url.replace("thumb.png", "max.png").replace("thumb.jpg", "max.jpg"),
-                    "id": "captured_from_ui"
-                }
-                room.image_json = self.latest_upload_data
-                room.imgsrc = self.latest_upload_data.get('thumb', '')
-                print(f"✅ Success! Captured: {os.path.basename(file_path)}")
-            else:
-                print("❌ Failed to find the uploaded image in the library UI.")
-    
-            # --- 6. CLOSE THE DIALOG ---
-            print("Closing upload dialog...")
-            # Try clicking the 'X' button in the dialog header first
-            close_button = editor_page.locator(".ui-dialog-titlebar-close").last
-            if await close_button.is_visible():
-                await close_button.click()
-            else:
-                # Fallback to Escape key if button isn't found
-                await editor_page.keyboard.press("Escape")
-            
-            # Brief wait to ensure the UI overlay is gone before next command
-            await asyncio.sleep(0.5)
-    
-        except Exception as e:
-            print(f"❌ Upload process failed: {e}")
-            # Emergency escape to attempt to clear the UI
-            await editor_page.keyboard.press("Escape")
-
-    async def get_recent_upload_data(self, room):
-        # 1. Define editor_page
-        editor_page = next((p for p in self.context.pages if "editor" in p.url), None)
-        if not editor_page:
-            print("❌ Editor tab not found.")
-            return
-    
-        try:
-            # 2. Click the Art Library Tab (specifically the 'a' tag)
-            # Roll20 tabs are an <ul> list; ui-id-2 is usually the Art Library
-            print("Opening Art Library...")
-            await editor_page.evaluate('document.querySelector("#ui-id-2").click()')
-            await asyncio.sleep(1) # Wait for the sidebar to swap views
-    
-            # 3. Target the specific "Recent Uploads" token path you identified
-            # Path: #recentuploads > ol > li:nth-child(1) > div.dd-content > div.token
-            recent_token_path = "#recentuploads > ol > li:nth-child(1) > div.dd-content > div.token"
-            token_element = editor_page.locator(recent_token_path)
-    
-            # 4. Wait for the specific token to be visible
-            await token_element.wait_for(state="visible", timeout=10000)
-    
-           # 5. Extract the attributes from the token and its child image
-            # The ID is usually on the div, but the URL is in the <img> src
-            asset_id = await token_element.get_attribute("data-itemid")
-            
-            # Target the nested <img> tag inside the token_element
-            img_element = token_element.locator("img")
-            img_src = await img_element.get_attribute("src")
-    
-            if img_src:
-                # Update your room object
-                room.image_json = {"id": asset_id, "imgsrc": img_src}
-                
-                # Clean the URL (remove the ?query string) and replace 'thumb' with 'max'
-                # Roll20 uses thumb.png for library icons, but max.png for the actual map image
-                clean_url = img_src.split('?')[0].replace('thumb', 'max')
-                room.imgsrc = clean_url
-                
-                print(f"✅ Successfully grabbed recent upload!")
-                print(f"Asset ID: {asset_id}")
-                print(f"URL: {clean_url}")
-            else:
-                print("❌ Token found, but no URL?")
-    
-        except Exception as e:
-            print(f"❌ Failed to click tab or find asset: {e}")
-
-    async def get_last_asset(self, room):
-        editor_page = next((p for p in self.context.pages if "editor" in p.url), None)
-        if not editor_page:
-            print("❌ Editor tab not found.")
-            return
-    
-        try:
-            # 1. Click Art Library Tab
-            await editor_page.click("#ui-id-2")
-            await asyncio.sleep(0.5)
-    
-            # 2. FORCE EXPAND "My Library" 
-            # In Roll20, your uploads are in a folder that might be collapsed.
-            # This clicks the folder name to ensure it's open.
-            my_library_folder = editor_page.locator(".user.root.library-folder > .folder-title")
-            if await my_library_folder.is_visible():
-                await my_library_folder.click()
-                await asyncio.sleep(1) # Wait for expansion animation
-    
-            # 3. Target the first item specifically inside the user library
-            # We use a more specific selector to ensure we aren't hitting a generic icon
-            last_item = editor_page.locator(".library-item.user").first
-            
-            # Wait specifically for the item to appear in the DOM
-            await last_item.wait_for(state="visible", timeout=10000)
-    
-            # 4. Extract Attributes
-            # data-fullsize is the most reliable for the high-res URL
-            img_src = await last_item.get_attribute("data-fullsize")
-            asset_id = await last_item.get_attribute("data-itemid")
-            
-            # Get thumbnail from the nested img tag
-            thumb_src = await last_item.locator("img").get_attribute("src")
-    
-            if img_src:
-                room.image_json = {
-                    "id": asset_id,
-                    "imgsrc": img_src,
-                    "thumb": thumb_src
-                }
-                # Clean URL: Roll20 URLs often have extra parameters; we want the clean one
-                room.imgsrc = thumb_src.split('?')[0] if thumb_src else img_src
-                
-                print(f"✅ Grabbed Asset: {asset_id}")
-                return True
-                
-        except Exception as e:
-            print(f"❌ Library Scraping Failed: {e}")
-            return False
+        
                     
     async def send_chat(self, chat_message):
         '''
@@ -1794,13 +1633,119 @@ class Roll20Automator:
         await editor_page.keyboard.press("Enter")
         print(f"Sent to chat: {chat_message}")
     
-    async def make_map(self, image_path, image_url, description, width=20, height=20):
+    async def make_map(self, room):
         '''
         !map Room Name||URL||Width||Height||Description
         '''
+        image_path = room.parent.parent.file_path('Rooms\\{} Level {} Room {}.png'.format(room.parent.parent.filename, room.parent.level, room.room_id))
         room_name = image_path.replace('Rooms/','').replace('.png','')
+        image_url = room.imgsrc
+        description = room.description
         
-        await self.send_chat(f'!map ||{room_name}||{image_url}||{int(width/70)}||{int(height/70)}||{description.replace('\n','|n').replace('\r', '|n')}')
+        await self.send_chat(f'!map ||{room_name}||{image_url}||{int(room.width_px/70)}||{int(room.height_px/70)}||{description.replace('\n','|n').replace('\r', '|n')}')
+
+
+    async def upload_image(self, room):
+        
+        file_path = room.parent.parent.file_path('Rooms\\{} Level {} Room {}.png'.format(room.parent.parent.filename, room.parent.level, room.room_id))
+        
+        if not os.path.exists(file_path):
+            print(f"❌ File not found: {file_path}")
+            return
+    
+        # 1. Read dimensions locally with PIL
+        try:
+            with Image.open(file_path) as img:
+                width_px, height_px = img.size
+                room.width_px = width_px
+                room.height_px = height_px
+                room.grid_w = max(1, round(width_px / 70))
+                room.grid_h = max(1, round(height_px / 70))
+                print(f"📐 File Dimensions: {width_px}x{height_px}px -> Grid: {room.grid_w}x{room.grid_h}")
+        except Exception as img_err:
+            print(f"⚠️ Could not read image dimensions: {img_err}")
+            room.grid_w = getattr(room, 'grid_w', 10) or 10
+            room.grid_h = getattr(room, 'grid_h', 10) or 10
+    
+        editor_page = next((p for p in self.context.pages if "editor" in p.url), None)
+        if not editor_page:
+            print("❌ Editor tab not found.")
+            return
+    
+        file_name = os.path.basename(file_path)
+        clean_base_name = os.path.splitext(file_name)[0]
+        print(f"Uploading: {file_name}...")
+    
+        captured_url = None
+    
+        # Track network responses specific to AWS/d20 S3 upload endpoints
+        async def handle_response(response):
+            nonlocal captured_url
+            url = response.url
+            if ("files.d20.io/images/" in url or "s3.amazonaws.com" in url) and ("thumb" in url or "max" in url):
+                captured_url = url
+    
+        editor_page.on("response", handle_response)
+    
+        try:
+            # 2. Open Art Library & Upload Dialog
+            await editor_page.evaluate('document.querySelector("#ui-id-2").click()')
+            await asyncio.sleep(0.3)
+            await editor_page.evaluate('document.querySelector("#userlibrary button.showuploaddialog").click()')
+            await asyncio.sleep(0.3)
+    
+            # 3. Snapshot existing preview img src if present
+            preview_img = editor_page.locator(".ui-dialog:visible .file-uploader img, .ui-dialog:visible .uploading-list img").first
+            old_src = await preview_img.get_attribute("src") if await preview_img.count() > 0 else None
+    
+            # 4. Perform File Upload
+            async with editor_page.expect_file_chooser() as fc_info:
+                await editor_page.click('.file-uploader__dropzone')
+                file_chooser = await fc_info.value
+                await file_chooser.set_files(file_path)
+    
+            # 5. Wait for preview src to change from the old src
+            for _ in range(15):
+                await asyncio.sleep(0.4)
+                if await preview_img.count() > 0:
+                    new_src = await preview_img.get_attribute("src")
+                    if new_src and new_src != old_src and "http" in new_src:
+                        captured_url = new_src
+                        break
+    
+            # 6. Format and store clean URLs
+            if captured_url:
+                clean_thumb = captured_url.split('?')[0].replace("max.png", "thumb.png").replace("max.jpg", "thumb.jpg")
+                clean_max = clean_thumb.replace("thumb.png", "max.png").replace("thumb.jpg", "max.jpg")
+    
+                room.image_json = {
+                    "thumb": clean_thumb,
+                    "imgsrc": clean_max,
+                    "id": clean_base_name,
+                    "grid_w": room.grid_w,
+                    "grid_h": room.grid_h
+                }
+                room.imgsrc = clean_thumb
+                print(f"✅ Captured Target Map URL: {clean_thumb}")
+            else:
+                print("⚠️ Upload completed, but target image URL was not updated.")
+    
+        except Exception as e:
+            print(f"❌ Upload error: {e}")
+    
+        finally:
+            editor_page.remove_listener("response", handle_response)
+            
+            # Close dialog
+            try:
+                close_button = editor_page.locator(".ui-dialog-titlebar-close").last
+                if await close_button.is_visible():
+                    await close_button.click()
+                else:
+                    await editor_page.keyboard.press("Escape")
+            except Exception:
+                pass
+            await asyncio.sleep(0.3)
 
 ##############
 # Enumerations

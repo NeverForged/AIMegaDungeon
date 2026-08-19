@@ -214,6 +214,10 @@ async def on_message(message):
             with open(image_location, 'rb') as f:
                 picture = discord.File(f, filename=image_location)
                 await message.channel.send(file=picture)
+                if r20 == True:
+                    # Update the Roll20 Map...
+                    roll20.upload_image(image_location, room)
+                    
         if len(doors) >= 1:
             await message.channel.send('Exits:')
             for d in doors:
