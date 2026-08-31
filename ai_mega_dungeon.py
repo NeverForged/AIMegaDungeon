@@ -544,6 +544,38 @@ class AIMegaDungeon:
         room.parent.rooms.remove(room)
         del room
     
+    def check_traps(self):
+        '''
+        Makes sure that Door Trap rooms have traps attached to the door and the room.
+        '''
+        for level in self.levels:
+            for room in self.levels[level].rooms:
+                if room.purpose == 'Door Trap':
+                    for door in room.doors:
+                       
+                        door.trapped = True
+                        door.traps = 'Trap({}): {} [Trigger: {}]\n'.format(room.parent.parent.roll_table(room.parent.parent.AppendixA['Random Traps']['Trap Damage Severity'])
+                                                             , room.parent.parent.roll_table(room.parent.parent.AppendixA['Random Traps']['Trap Effects'])
+                                                             , random.choice(['Touched (doorknob)', 'Opened (door)', 'Opened (door)']))
+                        for rm in door.rooms:
+                            rm
+         
+    def enter_dungeon(self, exit_level=0, exit_room_id=None):
+        '''
+        Allows a known level/room id to be used to set current room to that room so the room doesn't need to be saved.
+        '''
+        if exit_room_id == None:
+            self.current_room = self.levels[0].rooms[0]
+        else:
+            room = self.levels[exit_level].rooms[exit_room_id]
+            mydoor = room.doors[0]
+            for rm in room.parent.rooms:
+                for door in rm.doors:
+                    if door == mydoor:
+                        if rm != room:
+                            self.current_room = rm
+        return self.current_room
+        
     ## D&D TABLES
     def roll_table(self, df):
         droll = random.randint(1,max(df['Roll']))
@@ -662,7 +694,7 @@ class AIMegaDungeon:
                         Payload should not add architecture.
                     '''
                     prompt = prompt + 'Use the minimum words needed to convey the info above for eas of use at the table.'
-                    prompt = prompt + '\n\nInclude the statblocks and lookup information (book, pg number) for each monster\n\n'
+                    prompt = prompt + '\n\nInclude the statblocks/descriptions and lookup information (book, pg number) for each monster\n\n'
                     prompt = prompt + '\n\nRoom Description: {} [{}]'.format(room.purpose, room.state)
                     prompt = prompt + '    - room is {} square feet'.format(5*len(room.blocks))
                     prompt = prompt + '\n    Doors: \n{}'.format('        \n'.join(doors))
@@ -677,7 +709,7 @@ class AIMegaDungeon:
             if room.treasure != '':  # Potential AI Call
                 if ('art' in room.treasure or 'Table' in room.treasure or 'gems' in room.treasure) and '[Rolled]' not in room.treasure :
                     prompt = 'Roll on the appropriate d&d 5e 2024 tables and write details (gem types for gems, art description for art, etc.) for the following treasure: {}'.format(room.treasure)
-                    treasure_rolls = self.get_chat_response(prompt, role='You are a talented Quest Writer for {}'.format(self.parent.parent.game))
+                    treasure_rolls = self.get_chat_response(prompt, role='You are a talented Quest Writer for D&D 5e 2024')
                     room.treasure = '[Rolled] ' + room.treasure + '\n\n' + treasure_rolls
                     room_desc_basic = room_desc_basic + '\nTreasure: ' + room.treasure
                 else: 
@@ -756,7 +788,7 @@ class AIMegaDungeon:
                 prompt = prompt + '    - Inclue any note on roleplay for the creatures.\n'
                 prompt = prompt + "    - The monsters reaction to encountering the players is: {}".format(monster_reaction(-1))
                 propmt = prompt + "Use as few wrods as possible to convey this information"
-                prompt = prompt + '\n\nInclude the statblock and lookup information (book, pg number) for each monster\n\n'
+                prompt = prompt + '\n\nInclude the statblocks/descriptions and lookup information (book, pg number) for each monster\n\n'
                 if room.description == '':
                     doors = []
                     for door in [door for door in room.doors if 'Secret' not in door.door_type]:
@@ -1596,7 +1628,6 @@ class Roll20Automator:
         print("2. Launch your game: ")
         print("3. Once the map is loaded, come back here to run your upload.")
         
-
     async def close(self):
         """Clean up resources."""
         if self.context:
@@ -1643,7 +1674,6 @@ class Roll20Automator:
         description = room.description
         
         await self.send_chat(f'!map ||{room_name}||{image_url}||{int(room.width_px/70)}||{int(room.height_px/70)}||{description.replace('\n','|n').replace('\r', '|n')}')
-
 
     async def upload_image(self, room):
         

@@ -16,7 +16,9 @@ client = discord.Client(intents=intents)
 aimd = AIMegaDungeon(keys=os.getenv('AI_TOKENS'))
 print(os.getenv('AI_TOKENS'))
 
+# variables
 r20 = False
+roll20 = None
 
 def get_numbers(my_string):
     numbers_only_str = ''
@@ -36,6 +38,11 @@ async def on_ready():
 @client.event
 async def on_message(message):
     """Triggered every time a message is sent in a channel."""
+    
+    ### GLOBAL VARIABLES
+    global r20
+    global roll20
+    
     if message.author == client.user:
         return # Prevents the bot from responding to itself
 
@@ -213,10 +220,11 @@ async def on_message(message):
         if len(room.blocks) >= 2:
             with open(image_location, 'rb') as f:
                 picture = discord.File(f, filename=image_location)
-                await message.channel.send(file=picture)
                 if r20 == True:
                     # Update the Roll20 Map...
-                    roll20.upload_image(image_location, room)
+                    await roll20.upload_image(room)
+                    await roll20.make_map(room)
+                await message.channel.send(file=picture)
                     
         if len(doors) >= 1:
             await message.channel.send('Exits:')
