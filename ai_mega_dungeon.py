@@ -550,15 +550,29 @@ class AIMegaDungeon:
         '''
         for level in self.levels:
             for room in self.levels[level].rooms:
-                if room.purpose == 'Door Trap':
+                if room.purpose == 'Door Trap' and room.traps == '':
                     for door in room.doors:
-                       
                         door.trapped = True
                         door.traps = 'Trap({}): {} [Trigger: {}]\n'.format(room.parent.parent.roll_table(room.parent.parent.AppendixA['Random Traps']['Trap Damage Severity'])
                                                              , room.parent.parent.roll_table(room.parent.parent.AppendixA['Random Traps']['Trap Effects'])
                                                              , random.choice(['Touched (doorknob)', 'Opened (door)', 'Opened (door)']))
                         for rm in door.rooms:
-                            rm
+                            rm.traps = door.traps
+        # fix trap triggers
+        for level in self.levels.values():
+            for room in level.rooms:
+                if room.traps != '':
+                    if room.traps[:5] == 'Trick':
+                        new_feature = room.traps.split(':')[0].replace('Trick ','')
+                        room.furnishings.append('General Furnishings and Appointments: {}'.format(new_feature))
+                    else:
+                        trigger_bit = random.choice([a for a in room.furnishings if 'Furnishings' in a])
+                        trigger_bit = trigger_bit.split(':')[1]
+                        trigger_bit = random.choice([a for a in room.furnishings if 'Furnishings' in a])
+                        trigger_bit = trigger_bit.split(': ')[1]
+                        room.traps.replace('Touched (doorknob, statue)','Touched ({})'.format(trigger_bit))
+                        room.traps.replace('Looked at (mural, arcane symbol)','Looked at ({})'.format(trigger_bit))
+                        room.traps.replace('Moved (cart, stone block)','Moved ({})'.format(trigger_bit))
          
     def enter_dungeon(self, exit_level=0, exit_room_id=None):
         '''
